@@ -89,8 +89,9 @@ function makeSample(sb) {
       const st = error.context?.status;
       throw { code: body?.code || (st === 401 ? 'not_granted' : st === 429 ? 'rate_limited' : 'upstream'), message: body?.error || error.message };
     }
-    if (data?.error) throw { code: data.code || 'upstream', message: data.error };
+    if (data?.error) throw { code: data.code || 'upstream', message: data.error, text: data.text };
     const text = data?.text || '';
+    App.lastAI = { at: Date.now(), model: data?.model, text: text.slice(0, 4000) };
     opts.onText && opts.onText({ text, delta: text });
     return { text, truncated: false };
   }
@@ -98,7 +99,7 @@ function makeSample(sb) {
   sample.json = async (input, opts) => {
     const { text } = await call(input, opts, true);
     const v = parseLooseJSON(text);
-    if (v === undefined) throw { code: 'invalid_json', text };
+    if (v === undefined) throw { code: 'invalid_json', text, message: text ? '' : '빈 응답' };
     return v;
   };
   sample.limits = async () => ({ images: { maxCount: 6 } });

@@ -185,6 +185,19 @@ h3.sub{font-size:15px;margin:28px 0 10px}h3.mini{font-size:13px;color:var(--mute
 .fc-back{display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;max-width:520px;border-top:1px dashed var(--line);padding-top:14px;text-align:center}.fc-r{font-size:18px;color:var(--muted)}.fc-m{font-size:20px;font-weight:700}.fc-back .ex{text-align:left;width:100%;font-size:14px;color:var(--ink)}.fc-back .kv{width:100%}.fc-rel{width:100%;text-align:left;font-size:13.5px}.fc-rel>div{padding:4px 0}
 .fc-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:14px}
 @media (max-width:760px){.search select{flex:1 1 40%;min-width:0}.wgrid{grid-template-columns:1fr 1fr;gap:8px}.wcard{padding:10px}.ww{font-size:17px}.rw{grid-template-columns:auto auto 1fr auto}.rw .chip{display:none}.khead{gap:12px}.kbig{font-size:60px}.fcard{min-height:300px}.fc-w{font-size:34px}}
+
+/* settings */
+.stackcol{display:flex;flex-direction:column;gap:20px;min-width:0}
+.settings{align-items:start}
+.ib.sm{height:30px;padding:0 10px;font-size:12px}.ib.del{color:var(--red)}
+.bookrow span{overflow-wrap:anywhere}
+.examrow{display:grid;grid-template-columns:auto 1fr 84px auto;grid-template-areas:'chip name name name' 'date date lv del';gap:8px;align-items:center;padding:10px 0;border-top:1px dashed var(--line)}.examrow>.chip{grid-area:chip;justify-self:start}.examrow .ename{grid-area:name}.examrow .edate{grid-area:date}.examrow .elv{grid-area:lv}.examrow .del{grid-area:del}.examrow input,.examrow select{padding:7px 9px}.examrow.past{opacity:.6}
+.aitest{margin-top:10px}.aitest .red{color:var(--red);font-weight:500;text-align:right;font-size:12.5px}
+.raw{margin-top:10px;font-size:12px}.raw pre{white-space:pre-wrap;word-break:break-all;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:10px;max-height:260px;overflow:auto}
+.setlink{color:var(--sideink);opacity:.7;font-size:13px;text-align:left;padding:10px 12px;margin-top:auto}.setlink:hover{opacity:1}
+.side .setlink+.foot{margin-top:6px}
+.bgtask{position:fixed;right:max(16px,env(safe-area-inset-right,0px));top:calc(14px + env(safe-area-inset-top,0px));z-index:75;background:var(--green);color:#fff;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.15)}
+
 /* login */
 .login{min-height:100vh;display:grid;place-items:center;padding:24px 16px}
 .login .box2{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:28px;width:min(400px,100%);display:flex;flex-direction:column;gap:12px}
@@ -206,12 +219,14 @@ h3.sub{font-size:15px;margin:28px 0 10px}h3.mini{font-size:13px;color:var(--mute
  <aside class="side">
   <div class="logo">일본어 공부방<small>N5 → N2 · 워홀 준비</small></div>
   <nav class="nav" id="sideNav"></nav>
+  <button class="setlink" type="button" onclick="nav('settings')">⚙ 설정</button>
   <div class="foot" id="unitFoot"></div>
  </aside>
  <main id="view"><div class="loading">공부방을 여는 중…</div></main>
 </div>
 <nav class="tabbar" id="tabBar" hidden></nav>
 <div id="toasts" aria-live="polite"></div>
+<div id="bgTask" class="bgtask" hidden></div>
 <div id="netNote">저장소 응답이 늦어요. 인터넷 연결을 확인해 주세요.</div>
 <div id="setup" class="login" hidden><div class="box2"><h1>연결 설정이 필요해요</h1><p>config.js에 Supabase 주소와 anon 키를 넣어 주세요. 설치 안내서(README)의 3단계를 확인하세요.</p></div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>

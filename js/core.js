@@ -192,7 +192,9 @@ function aiErrorText(e) {
   if (c === 'no_key') return 'Supabase에 GEMINI_API_KEY가 설정되지 않았어요. 설치 안내서 4단계를 확인해 주세요.';
   if (c === 'upstream') return 'AI 서버가 응답하지 않았어요. 잠시 후 다시 시도해 주세요. (' + (e?.message || '').slice(0, 80) + ')';
   if (c === 'rate_limited') return '요청이 많아 잠시 쉬어야 해요. 조금 뒤에 다시 시도해 주세요.';
-  if (c === 'invalid_json') return 'AI 응답을 읽지 못했어요. 다시 시도해 주세요.';
+  if (c === 'invalid_json') return 'AI 응답을 읽지 못했어요. 다시 시도해 주세요. (설정 → AI 연결 테스트에서 원문을 볼 수 있어요)';
+  if (c === 'truncated') return 'AI 답이 너무 길어 중간에 잘렸어요. 문항 수를 줄여 다시 시도해 주세요.';
+  if (c === 'empty') return 'AI가 쓸 수 있는 문제를 만들지 못했어요. 다시 시도해 주세요.';
   if (c === 'cancelled') return '취소했어요.';
   if (c === 'images_unavailable' || c === 'image_rejected') return '이 사진은 AI에 보낼 수 없어요. 다른 사진으로 해 주세요.';
   return 'AI 요청에 실패했어요 (' + (c || 'error') + ').';
@@ -240,12 +242,31 @@ const Q_SPEC = `각 문제는 이 JSON 형태를 따르세요:
 {"area":"v|g|r|l","sub":"유형 이름(일본어, 예: 文脈規定)","items":["관련 항목 id"],"prompt":"문제 문장(일본어). 밑줄 대상은 [u]단어[/u], 빈칸은 （　　）, 文の組み立て는 ＿＿ ＿＿ ★ ＿＿ 형태","passage":"독해 지문(일본어, 독해만)","script":[{"s":"男|女|N","t":"대사(일본어, 청해만)"}],"choices":["보기1","보기2","보기3","보기4"],"ans":0,"expl":"한국어 해설 1~2문장"}
 규칙: choices는 정확히 4개, ans는 0~3 정답 위치(위치를 고르게 섞기), 오답 보기는 그럴듯하지만 명확히 틀려야 함, 정답은 오직 하나. 청해는 prompt에 질문을 쓰고 script에 대화를 쓰며, 보기는 짧게. 문맥이 자연스러운 실제 생활 장면 문장을 쓰고, 같은 문형을 반복하지 마세요. 설명 외의 텍스트 없이 JSON 배열만 답하세요.`;
 
+function unwrapArray(v) {
+  if (Array.isArray(v)) return v;
+  if (v && typeof v === 'object') {
+    for (const k of ['questions', 'items', 'data', 'result', 'problems', '문제']) if (Array.isArray(v[k])) return v[k];
+    const arrs = Object.values(v).filter(Array.isArray);
+    if (arrs.length === 1) return arrs[0];
+    if (v.choices) return [v];
+  }
+  return [];
+}
 function validateQs(arr, allowIds) {
-  if (!Array.isArray(arr)) return [];
+  arr = unwrapArray(arr);
   const ok = [];
-  for (const q of arr) {
-    if (!q || !Array.isArray(q.choices) || q.choices.length !== 4) continue;
-    const ans = Number(q.ans); if (!(ans >= 0 && ans <= 3)) continue;
+  for (const raw of arr) {
+    if (!raw || typeof raw !== 'object') continue;
+    const q = { ...raw };
+    q.choices = q.choices || q.options || q.opts;
+    if (Array.isArray(q.choices)) q.choices = q.choices.map(c => (c && typeof c === 'object') ? (c.text ?? c.t ?? c.label ?? Object.values(c)[0]) : c);
+    if (!Array.isArray(q.choices) || q.choices.length !== 4) continue;
+    let ans = q.ans ?? q.answer ?? q.correct ?? q.answerIndex;
+    if (typeof ans === 'string' && !/^\d+$/.test(ans.trim())) ans = q.choices.indexOf(ans);
+    ans = Number(ans);
+    if (!(ans >= 0 && ans <= 3)) continue;
+    q.area = String(q.area || '').toLowerCase()[0];
+    q.script = Array.isArray(q.script) ? q.script.map(l => typeof l === 'string' ? { s: 'N', t: l } : l) : q.script;
     if (!['v', 'g', 'r', 'l'].includes(q.area)) q.area = 'g';
     if (q.area === 'l' && (!Array.isArray(q.script) || !q.script.length)) continue;
     if (q.area === 'r' && !q.passage) q.area = 'g';
@@ -257,21 +278,39 @@ function validateQs(arr, allowIds) {
 function itemsForPrompt(ids) {
   return ids.map(id => { const it = App.byId[id]; if (!it) return ''; return it.t === 'g' ? `${id}: 문법 ${it.p} (${it.m})` : it.t === 'k' ? `${id}: 한자 ${it.c} (${it.m})` : `${id}: 단어 ${it.w}[${it.r}] (${it.m})`; }).filter(Boolean).join('\n');
 }
-async function generateQuestions({ ids, level = 5, counts, source, title, signal }) {
+const BG = { tasks: 0, set(text) { const el = document.getElementById('bgTask'); if (!el) return; if (text) { el.textContent = text; el.hidden = false; } else el.hidden = true; } };
+async function generateQuestions({ ids, level = 5, counts, source, title, signal, onProgress }) {
   const want = counts || { '文脈規定(v)': 4, '言い換え類義(v)': 2, '文法形式の判断(g)': 6, '文の組み立て(g)': 3, '読解 短文(r)': 2, '聴解 課題理解/ポイント理解(l)': 3 };
-  const total = Object.values(want).reduce((a, b) => a + b, 0);
-  const prompt = `당신은 JLPT N${level} 출제위원입니다. 한국인 학습자를 위한 실전형 문제를 만드세요.
+  // 한 번에 많이 만들면 답이 잘리므로 6문항 안팎으로 나눠 동시에 요청
+  const entries = Object.entries(want).filter(([, n]) => n > 0);
+  const batches = []; let cur = {}, curN = 0;
+  for (const [k, n0] of entries) {
+    let n = n0;
+    while (n > 0) { const take = Math.min(n, 6 - curN); cur[k] = (cur[k] || 0) + take; curN += take; n -= take; if (curN >= 6) { batches.push(cur); cur = {}; curN = 0; } }
+  }
+  if (curN) batches.push(cur);
+  let done = 0; const total = batches.length;
+  BG.tasks++; BG.set(`문제 만드는 중… 0/${total}`);
+  const one = async b => {
+    const n = Object.values(b).reduce((a, x) => a + x, 0);
+    const prompt = `당신은 JLPT N${level} 출제위원입니다. 한국인 학습자를 위한 실전형 문제를 만드세요.
 학습 대상 항목 (id: 내용):
-${itemsForPrompt(ids)}
+${itemsForPrompt(shuffle(ids).slice(0, 14))}
 
 학습자가 이미 배운 문법(이 범위를 넘는 문법은 쓰지 마세요): ${learnedContext(level)}
 어휘·문법 수준: N${level} 범위 안에서만.
-만들 문제 수와 유형 (총 ${total}개): ${Object.entries(want).map(([k, v]) => `${k} ${v}개`).join(', ')}
+만들 문제 (총 ${n}개): ${Object.entries(b).map(([k, v]) => `${k} ${v}개`).join(', ')}
 각 문제의 items에는 위 목록의 id 중 실제로 묻는 항목을 넣으세요.
 ${Q_SPEC}`;
-  const arr = await aiJSON(prompt, { signal, modelTier: 'default' });
-  const qs = validateQs(arr, null);
-  if (!qs.length) throw { code: 'invalid_json' };
+    try { const arr = await aiJSON(prompt, { signal, modelTier: 'default' }); return validateQs(arr, null); }
+    catch (e) { if (e?.code === 'cancelled' || e?.code === 'not_granted' || e?.code === 'no_key') throw e; console.warn('batch failed', e); App.lastAIError = e; return []; }
+    finally { done++; BG.set(`문제 만드는 중… ${done}/${total}`); onProgress && onProgress(done, total); }
+  };
+  let qs = [];
+  try {
+    for (let i = 0; i < batches.length; i += 3) qs = qs.concat(...await Promise.all(batches.slice(i, i + 3).map(one)));
+  } finally { if (--BG.tasks <= 0) { BG.tasks = 0; BG.set(''); } }
+  if (!qs.length) throw (App.lastAIError?.code ? App.lastAIError : { code: 'empty' });
   const bank = { id: uid('b'), created: App.today, source: source || 'manual', title: title || '', level, qs };
   App.banks.push(bank);
   await writeDoc('qbank/' + bank.id, bank);

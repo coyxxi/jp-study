@@ -1,8 +1,16 @@
 /* 일본어 공부방 · views */
 'use strict';
 const TABS = [['today', '今', '오늘'], ['study', '学', '공부'], ['record', '記', '기록'], ['test', '試', '시험'], ['talk', '話', '회화'], ['stats', '力', '내 실력']];
-const examDate = () => App.state.examDate || '2026-12-06';
-const targetLevel = () => App.state.target || 5;
+const DEFAULT_BOOKS = ['우키우키 상권', '우키우키 하권', '기타'];
+const books = () => (App.state.books && App.state.books.length) ? App.state.books : DEFAULT_BOOKS;
+const profile = () => Object.assign({ name: '일본어 공부방', sub: 'N5 → N2 · 워홀 준비' }, App.state.profile || {});
+function exams() {
+  if (App.state.exams && App.state.exams.length) return App.state.exams;
+  return [{ name: 'JLPT N5', date: App.state.examDate || '2026-12-06', level: App.state.target || 5 }, { name: 'JLPT N2', date: '2027-07-04', level: 2 }];
+}
+function nextExam() { const ex = [...exams()].sort((a, b) => a.date.localeCompare(b.date)); return ex.find(e => e.date >= App.today) || ex[ex.length - 1] || { name: '시험', date: App.today, level: 5 }; }
+const examDate = () => nextExam().date;
+const targetLevel = () => +nextExam().level || 5;
 const unitText = () => App.state.unit || '진도 미입력';
 const md = s => { if (!s) return ''; const [, m, d] = s.split('-'); return `${+m}월 ${+d}일`; };
 
@@ -12,8 +20,10 @@ function nav(tab, sub) {
   try { localStorage.setItem('jp.tab', tab); } catch { }
   $$('.nav [data-tab], .tabbar [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   const v = $('#view'); v.innerHTML = ''; window.scrollTo(0, 0);
-  ({ today: renderToday, study: renderStudy, record: renderRecord, test: renderTest, talk: renderTalk, stats: renderStats })[tab](v, sub);
+  ({ today: renderToday, study: renderStudy, record: renderRecord, test: renderTest, talk: renderTalk, stats: renderStats, settings: renderSettings })[tab](v, sub);
   $('#unitFoot').textContent = '학원 진도 · ' + unitText();
+  const pr = profile(); const lg = $('.side .logo'); if (lg) { lg.firstChild.textContent = pr.name; $('small', lg).textContent = pr.sub; }
+  document.title = pr.name;
 }
 function pageHead(title, subtitle, right) {
   return h('div', { class: 'top' }, h('div', {}, h('h1', {}, title), subtitle ? h('p', {}, subtitle) : null), right || null);
@@ -71,7 +81,7 @@ async function renderToday(v) {
   const d = new Date();
   const wd = '일월화수목금토'[d.getDay()];
   v.append(pageHead(`${d.getMonth() + 1}월 ${d.getDate()}일 ${wd}요일, 오늘의 공부`, '학원 가기 전 30분에 맞춰 구성했어요',
-    h('div', { class: 'dday' }, h('b', {}, dd >= 0 ? `D-${dd}` : '완료'), h('div', {}, `JLPT N${targetLevel()}`, h('br'), md(examDate())))));
+    h('div', { class: 'dday' }, h('b', {}, dd > 0 ? `D-${dd}` : dd === 0 ? 'D-DAY' : '완료'), h('div', {}, nextExam().name, h('br'), md(examDate())))));
   const grid = h('div', { class: 'grid2' }); v.append(grid);
   const setCard = card('오늘의 세트', '', h('div', { class: 'muted' }, '불러오는 중…'));
   grid.append(setCard);
@@ -178,10 +188,13 @@ function renderRecord(v, sub = 'lesson') {
     segTabs([['lesson', '수업 노트'], ['memo', '회화 모임']], sub, k => nav('record', k))));
   if (sub === 'memo') return renderMemo(v);
   const cols = h('div', { class: 'cols3' }); v.append(cols);
-  const books = ['상권', '하권', '기타'];
-  const cur = (App.state.unit || '하권 2과').match(/(상권|하권|기타)\s*(\d+)?/) || [];
-  const bookSel = h('select', {}, books.map(b => h('option', { value: b, selected: b === (cur[1] || '하권') }, '우키우키 ' + b)));
-  const lessonNo = h('input', { type: 'number', min: 1, max: 40, value: cur[2] ? +cur[2] + 1 : 1 });
+  const bl = books();
+  const unitNow = App.state.unit || '우키우키 하권 2과';
+  const curBook = bl.find(b => unitNow.startsWith(b)) || bl.find(b => unitNow.includes(b.replace('우키우키 ', ''))) || bl[0];
+  const curNo = +(unitNow.match(/(\d+)\s*과/) || [])[1] || 0;
+  const bookSel = h('select', {}, bl.map(b => h('option', { value: b, selected: b === curBook }, b)), h('option', { value: '__add' }, '＋ 교재 추가…'));
+  bookSel.addEventListener('change', () => { if (bookSel.value === '__add') { bookSel.value = curBook; nav('settings'); } });
+  const lessonNo = h('input', { type: 'number', min: 1, max: 60, value: curNo ? curNo + 1 : 1 });
   const dateIn = h('input', { type: 'date', value: App.today });
   const files = []; const thumbs = h('div', { class: 'photos' });
   const fileIn = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: () => { for (const f of fileIn.files) if (files.length < 6) files.push(f); fileIn.value = ''; drawThumbs(); } });
@@ -215,7 +228,7 @@ function renderRecord(v, sub = 'lesson') {
     const done = busy(runBtn, 'AI가 정리하는 중… (최대 1~2분)');
     ctl = new AbortController();
     statusBox.innerHTML = ''; statusBox.append(h('div', { class: 'status' }, h('b', {}, '사진을 읽고 있어요'), '단어·문법·예문을 추출하고 수업 노트를 쓰는 중이에요.', h('button', { class: 'btn ghost sm', onclick: () => ctl.abort() }, '중지')));
-    const prompt = `일본어 학원 수업 자료(교재 "우키우키 일본어" ${unit}, 선생님 프린트)를 정리해 주세요. 학습자는 한국인이고 JLPT N5→N2를 준비 중입니다.
+    const prompt = `일본어 학원 수업 자료(교재 "${unit}", 선생님 프린트)를 정리해 주세요. 학습자는 한국인이고 JLPT N5→N2를 준비 중입니다.
 ${files.length ? `첨부 사진 ${files.length}장은 교재/프린트 페이지입니다. 사진에 실제로 보이는 내용만 추출하세요.` : ''}
 학습자 메모: ${memo.value.trim() || '(없음)'}
 
@@ -667,9 +680,9 @@ function renderPrep(v) {
 
 /* =================== STATS =================== */
 function renderStats(v) {
-  v.append(pageHead('내 실력', '레벨별 진행도와 약점, 전체 학습 항목을 한눈에 봐요'));
+  v.append(pageHead('내 실력', '레벨별 진행도와 약점, 전체 학습 항목을 한눈에 봐요', h('button', { class: 'btn ghost', onclick: () => nav('settings') }, '⚙ 설정')));
   const lv = h('div', { class: 'lvcards' }); v.append(lv);
-  const plans = { 5: md(examDate()), 4: '진행 중', 3: '2027 봄', 2: '2027년 7월' };
+  const plans = {}; for (const e of exams()) plans[+e.level] = md(e.date).replace(/^/, e.date.slice(0, 4) !== App.today.slice(0, 4) ? e.date.slice(0, 4) + '년 ' : ''); [5, 4, 3, 2].forEach(l => plans[l] = plans[l] || (l === targetLevel() ? '목표' : '준비 중'));
   for (const L of [5, 4, 3, 2]) {
     const s = levelStats(L); const p = s.total ? Math.round((s.a + s.l + s.m) / s.total * 100) : 0;
     lv.append(h('div', { class: 'lc' + (L === targetLevel() ? ' now' : '') + (s.total && p < 5 ? ' dim' : '') },
@@ -709,20 +722,6 @@ function renderStats(v) {
   }
   draw();
   // settings
-  const ex = h('input', { type: 'date', value: examDate() }); const tl = h('select', {}, [5, 4, 3, 2].map(l => h('option', { value: l, selected: l === targetLevel() }, 'N' + l)));
-  const impIn = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: async () => {
-    const f = impIn.files[0]; impIn.value = ''; if (!f) return;
-    let rows; try { const j = JSON.parse(await f.text()); rows = Array.isArray(j) ? j : j.docs; } catch { toast('백업 파일을 읽지 못했어요.', 'err'); return; }
-    if (!Array.isArray(rows) || !rows.every(r => r && typeof r.path === 'string' && r.data && typeof r.data === 'object')) { toast('공부방 백업 파일이 아니에요.', 'err'); return; }
-    const mm = modal(h('div', {}, h('h2', {}, '백업 불러오기'), h('p', {}, `기록 ${rows.length}개를 불러와요. 같은 항목은 백업 내용으로 덮어써요.`),
-      h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => mm.close() }, '취소'), h('button', { class: 'btn', onclick: async e => { const done = busy(e.currentTarget, '불러오는 중…'); try { await App.db.importAll(rows); toast('불러왔어요. 새로고침할게요.'); setTimeout(() => location.reload(), 800); } catch { toast('불러오기에 실패했어요.', 'err'); done(); } } }, '불러오기'))));
-  } });
-  v.append(card('설정', '', h('div', { class: 'row wrap' }, h('label', {}, '다음 시험 날짜 ', ex), h('label', {}, '목표 레벨 ', tl), h('button', { class: 'btn sm', onclick: () => { App.state.examDate = ex.value; App.state.target = +tl.value; saveState(); flushSaves(); toast('저장했어요.'); nav('stats'); } }, '저장')),
-    h('div', { class: 'row wrap' }, h('span', { class: 'muted sm' }, '기록 백업: 모든 학습 기록을 파일 하나로 내려받거나 다시 불러와요.'),
-      h('div', { class: 'row tight gap' },
-        h('button', { class: 'btn ghost sm', onclick: async e => { const done = busy(e.currentTarget, '내보내는 중…'); try { await flushSaves(); const rows = await App.db.exportAll(); const blob = new Blob([JSON.stringify({ app: 'jp-study', at: new Date().toISOString(), docs: rows })], { type: 'application/json' }); const a = h('a', { href: URL.createObjectURL(blob), download: `공부방-백업-${App.today}.json` }); document.body.append(a); a.click(); a.remove(); } catch { toast('내보내기에 실패했어요.', 'err'); } finally { done(); } } }, '백업 내려받기'),
-        h('button', { class: 'btn ghost sm', onclick: () => impIn.click() }, '백업 불러오기'), impIn,
-        App.signOut ? h('button', { class: 'btn ghost sm', onclick: () => App.signOut() }, '로그아웃') : null))));
 }
 function itemDetail(it, after) {
   const p = P(it.id) || {};
@@ -750,4 +749,103 @@ function weeklyChart() {
     const l = pts[pts.length - 1]; svg += `<text x="${l[0] + 8}" y="${l[1] + 4}" font-size="12" font-weight="700" fill="${colors[a]}">${AREA[a]}</text>`;
   }
   return h('div', { html: svg + '</svg>' });
+}
+
+/* =================== SETTINGS =================== */
+function renderSettings(v) {
+  v.append(pageHead('설정', '공부방 이름, 교재, 시험 일정, AI 연결과 백업을 관리해요'));
+  const wrap = h('div', { class: 'grid2 settings' }); v.append(wrap);
+  const left = h('div', { class: 'stackcol' }), right = h('div', { class: 'stackcol' });
+  wrap.append(left, right);
+  const save = (msg = '저장했어요.') => { saveState(); flushSaves(); toast(msg); };
+
+  // 1. 이름·부제
+  const pr = profile();
+  const nameIn = h('input', { id: 'setName', value: pr.name, maxlength: 30 });
+  const subIn = h('input', { id: 'setSub', value: pr.sub, maxlength: 40 });
+  left.append(card('공부방 이름', '', h('div', { class: 'label' }, '이름'), nameIn, h('div', { class: 'label' }, '부제'), subIn,
+    h('div', { class: 'row end' }, h('button', { class: 'btn sm', onclick: () => { App.state.profile = { name: nameIn.value.trim() || '일본어 공부방', sub: subIn.value.trim() }; save(); nav('settings'); } }, '저장'))));
+
+  // 2. 교재 목록
+  const bookCard = card('교재 목록', '수업 기록에서 고르는 교재'); left.append(bookCard);
+  const drawBooks = () => {
+    $$('.bookrow, .bookadd', bookCard).forEach(e => e.remove());
+    const bl = [...books()];
+    bl.forEach((b, i) => bookCard.append(h('div', { class: 'kv bookrow' }, h('span', {}, b),
+      h('div', { class: 'row tight gap' },
+        i > 0 ? h('button', { class: 'ib sm', title: '위로', onclick: () => { [bl[i - 1], bl[i]] = [bl[i], bl[i - 1]]; App.state.books = bl; save('순서를 바꿨어요.'); drawBooks(); } }, '↑') : null,
+        h('button', { class: 'ib sm del', title: '삭제', onclick: () => {
+          if (bl.length <= 1) { toast('교재는 하나 이상 있어야 해요.'); return; }
+          const mm = modal(h('div', {}, h('h2', {}, '교재 삭제'), h('p', {}, `"${b}"을(를) 목록에서 뺄까요? 이미 기록한 수업 노트는 그대로 남아요.`),
+            h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => mm.close() }, '취소'), h('button', { class: 'btn', onclick: () => { bl.splice(i, 1); App.state.books = bl; save('삭제했어요.'); mm.close(); drawBooks(); } }, '삭제'))));
+        } }, '삭제')))));
+    const addIn = h('input', { placeholder: '예) 우키우키 중급, 新完全マスター N2 문법' });
+    const add = () => { const t = addIn.value.trim(); if (!t) return; if (bl.includes(t)) { toast('이미 있는 교재예요.'); return; } bl.push(t); App.state.books = bl; save('교재를 추가했어요.'); drawBooks(); };
+    addIn.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) add(); });
+    bookCard.append(h('div', { class: 'row bookadd' }, addIn, h('button', { class: 'btn sm', onclick: add }, '추가')));
+  };
+  drawBooks();
+
+  // 3. 시험 일정
+  const examCard = card('시험 일정', '지난 시험은 자동으로 다음 시험으로 넘어가요'); right.append(examCard);
+  const drawExams = () => {
+    $$('.examrow, .examfoot, .examnote', examCard).forEach(e => e.remove());
+    const list = exams().map(e => ({ ...e }));
+    const nx = nextExam();
+    list.sort((a, b) => a.date.localeCompare(b.date));
+    list.forEach((e, i) => {
+      const nameIn = h('input', { class: 'ename', value: e.name, onchange: () => e.name = nameIn.value.trim() || e.name });
+      const dateIn = h('input', { class: 'edate', type: 'date', value: e.date, onchange: () => e.date = dateIn.value || e.date });
+      const lvSel = h('select', { class: 'elv', onchange: () => e.level = +lvSel.value }, [5, 4, 3, 2, 1].map(l => h('option', { value: l, selected: l === +e.level }, 'N' + l)));
+      const past = e.date < App.today;
+      examCard.append(h('div', { class: 'examrow' + (past ? ' past' : '') },
+        h('span', { class: 'chip ' + (e.date === nx.date && e.name === nx.name ? 'c-red' : past ? 'c-gray' : 'c-blue') }, e.date === nx.date && e.name === nx.name ? '다음 시험' : past ? '지남' : '예정'),
+        nameIn, dateIn, lvSel, h('button', { class: 'ib sm del', title: '삭제', onclick: () => { if (list.length <= 1) { toast('시험은 하나 이상 있어야 해요.'); return; } list.splice(i, 1); App.state.exams = list; save('삭제했어요.'); drawExams(); } }, '삭제')));
+    });
+    examCard.append(h('p', { class: 'muted sm examnote' }, '"다음 시험"의 레벨이 목표 레벨이 되어 오늘 세트와 시험 출제 범위가 따라가요. N2 날짜는 7월 첫째 일요일 예정일이니, 공식 발표가 나면 고쳐 주세요.'),
+      h('div', { class: 'row examfoot' },
+        h('button', { class: 'btn ghost sm', onclick: () => { list.push({ name: 'JLPT', date: addDays(App.today, 180), level: 3 }); App.state.exams = list; save('시험을 추가했어요. 이름과 날짜를 고쳐 주세요.'); drawExams(); } }, '＋ 시험 추가'),
+        h('button', { class: 'btn sm', onclick: () => { App.state.exams = list; App.dayDoc = null; save(); drawExams(); } }, '저장')));
+  };
+  drawExams();
+
+  // 4. AI 연결 테스트
+  const out = h('div', { class: 'aitest' });
+  const tbtn = h('button', { class: 'btn sm', onclick: async () => {
+    out.innerHTML = ''; const done = busy(tbtn, '확인 중…');
+    const line = (ok, label, detail) => out.append(h('div', { class: 'kv' }, h('span', {}, (ok ? '✅ ' : '❌ ') + label), h('b', { class: ok ? '' : 'red' }, detail || '')));
+    try {
+      if (!App.sample) { line(false, '연결 설정', 'Supabase 연결 없음'); return; }
+      let t0 = Date.now();
+      try { const r = await App.sample.json('JSON만 답하세요: {"ok":true,"hello":"こんにちは"}', { modelTier: 'quick', cache: false }); line(!!r, '빠른 모델', [App.lastAI?.model, ((Date.now() - t0) / 1000).toFixed(1) + '초'].filter(Boolean).join(' · ')); }
+      catch (e) { line(false, '빠른 모델', aiErrorText(e)); showRaw(e); return; }
+      t0 = Date.now();
+      try {
+        const arr = await App.sample.json(`JLPT N5 문법 문제 2개를 만드세요.\n${Q_SPEC}`, { modelTier: 'default', cache: false });
+        const qs = validateQs(arr, null);
+        line(qs.length > 0, '문제 만들기 모델', [App.lastAI?.model, ((Date.now() - t0) / 1000).toFixed(1) + '초', `문제 ${qs.length}개 읽음`].filter(Boolean).join(' · '));
+        if (!qs.length) showRaw({ text: App.lastAI?.text });
+      } catch (e) { line(false, '문제 만들기 모델', aiErrorText(e)); showRaw(e); }
+    } finally { done(); }
+    function showRaw(e) {
+      const raw = e?.text || App.lastAI?.text || e?.message || '';
+      if (raw) out.append(h('details', { class: 'raw' }, h('summary', {}, 'AI 응답 원문 보기 (오류 확인용)'), h('pre', {}, String(raw).slice(0, 3000))));
+    }
+  } }, 'AI 연결 테스트');
+  right.append(card('AI 연결', '', h('p', { class: 'muted sm' }, '문제 만들기가 안 될 때 눌러 보세요. 키·함수·모델 중 어디가 문제인지 보여줘요.'), h('div', { class: 'row end' }, tbtn), out));
+
+  // 5. 백업 · 로그아웃
+  const impIn = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: async () => {
+    const f = impIn.files[0]; impIn.value = ''; if (!f) return;
+    let rows; try { const j = JSON.parse(await f.text()); rows = Array.isArray(j) ? j : j.docs; } catch { toast('백업 파일을 읽지 못했어요.', 'err'); return; }
+    if (!Array.isArray(rows) || !rows.every(r => r && typeof r.path === 'string' && r.data && typeof r.data === 'object')) { toast('공부방 백업 파일이 아니에요.', 'err'); return; }
+    const mm = modal(h('div', {}, h('h2', {}, '백업 불러오기'), h('p', {}, `기록 ${rows.length}개를 불러와요. 같은 항목은 백업 내용으로 덮어써요.`),
+      h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => mm.close() }, '취소'), h('button', { class: 'btn', onclick: async e => { const done = busy(e.currentTarget, '불러오는 중…'); try { await App.db.importAll(rows); toast('불러왔어요. 새로고침할게요.'); setTimeout(() => location.reload(), 800); } catch { toast('불러오기에 실패했어요.', 'err'); done(); } } }, '불러오기'))));
+  } });
+  right.append(card('기록 백업', App.state.lastBackup ? '마지막 백업 ' + App.state.lastBackup : '',
+    h('p', { class: 'muted sm' }, '모든 학습 기록을 파일 하나로 내려받거나 다시 불러와요. 한 달에 한 번 정도 받아 두세요.'),
+    h('div', { class: 'row end' },
+      h('button', { class: 'btn ghost sm', onclick: async e => { const done = busy(e.currentTarget, '내보내는 중…'); try { await flushSaves(); const rows = await App.db.exportAll(); const blob = new Blob([JSON.stringify({ app: 'jp-study', at: new Date().toISOString(), docs: rows })], { type: 'application/json' }); const a = h('a', { href: URL.createObjectURL(blob), download: `공부방-백업-${App.today}.json` }); document.body.append(a); a.click(); a.remove(); App.state.lastBackup = App.today; saveState(); } catch { toast('내보내기에 실패했어요.', 'err'); } finally { done(); } } }, '백업 내려받기'),
+      h('button', { class: 'btn ghost sm', onclick: () => impIn.click() }, '백업 불러오기'), impIn,
+      App.signOut ? h('button', { class: 'btn ghost sm', onclick: () => App.signOut() }, '로그아웃') : null)));
 }

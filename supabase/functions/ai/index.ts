@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
 
   const body = JSON.stringify({
     contents,
-    generationConfig: { temperature: 0.8, maxOutputTokens: 8192, ...(json ? { responseMimeType: "application/json" } : {}) },
+    generationConfig: { temperature: 0.8, maxOutputTokens: 32768, ...(json ? { responseMimeType: "application/json" } : {}) },
   });
   const first = tier === "quick" ? MODEL_QUICK : MODEL_DEFAULT;
   const models = [first, ...FALLBACKS.filter((m) => m !== first)];
@@ -49,8 +49,12 @@ Deno.serve(async (req) => {
     if (r.status === 404 || (r.status === 400 && /model/i.test(j?.error?.message ?? ""))) { lastErr = j?.error?.message ?? "model not found"; continue; }
     if (r.status === 429) return reply({ error: j?.error?.message ?? "rate limited", code: "rate_limited" }, 429);
     if (!r.ok) return reply({ error: j?.error?.message ?? `HTTP ${r.status}`, code: "upstream" }, 502);
-    const text = (j?.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? "").join("");
-    return reply({ text, model });
+    const cand = j?.candidates?.[0];
+    const text = (cand?.content?.parts ?? []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text ?? "").join("");
+    const finish = cand?.finishReason ?? "";
+    if (!text && j?.promptFeedback?.blockReason) return reply({ error: "blocked: " + j.promptFeedback.blockReason, code: "upstream" }, 502);
+    if (finish === "MAX_TOKENS") return reply({ error: "output too long", code: "truncated", text, model }, 200);
+    return reply({ text, model, finish });
   }
   return reply({ error: lastErr, code: "upstream" }, 502);
 });

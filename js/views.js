@@ -82,6 +82,8 @@ async function renderToday(v) {
   const wd = '일월화수목금토'[d.getDay()];
   v.append(pageHead(`${d.getMonth() + 1}월 ${d.getDate()}일 ${wd}요일, 오늘의 공부`, '학원 가기 전 30분에 맞춰 구성했어요',
     h('div', { class: 'dday' }, h('b', {}, dd > 0 ? `D-${dd}` : dd === 0 ? 'D-DAY' : '완료'), h('div', {}, nextExam().name, h('br'), md(examDate())))));
+  const lr = App.state.autoGen?.lastResult;
+  if (lr && lr.date === App.today) v.append(h('div', { class: 'note ' + (lr.ok ? '' : 'warn') }, lr.ok ? (lr.n ? `오늘 ${lr.at}에 새 문제 ${lr.n}개를 만들어 두었어요. 오늘 세트와 시험에 섞여 나와요.` : `오늘 아침 자동 만들기: ${lr.msg || '건너뜀'}`) : `오늘 아침 자동 문제 만들기에 실패했어요 (${lr.msg || ''}). 설정에서 "지금 한 번 만들기"를 눌러 보세요.`));
   const grid = h('div', { class: 'grid2' }); v.append(grid);
   const setCard = card('오늘의 세트', '', h('div', { class: 'muted' }, '불러오는 중…'));
   grid.append(setCard);
@@ -809,7 +811,27 @@ function renderSettings(v) {
   };
   drawExams();
 
-  // 4. AI 연결 테스트
+  // 4. 매일 아침 자동 문제
+  const ag = Object.assign({ on: true, hour: 7 }, App.state.autoGen || {});
+  const onIn = h('input', { type: 'checkbox', id: 'agOn', checked: ag.on });
+  const hourSel = h('select', { id: 'agHour' }, Array.from({ length: 24 }, (_, i) => h('option', { value: i, selected: i === +ag.hour }, `${i < 12 ? '오전' : '오후'} ${i % 12 || 12}시`)));
+  const lr = ag.lastResult;
+  const lastLine = lr ? (lr.ok ? (lr.n ? `${md(lr.date)} ${lr.at}에 문제 ${lr.n}개를 만들었어요` : `${md(lr.date)} ${lr.at} · ${lr.msg || '건너뜀'}`) : `${md(lr.date)} ${lr.at} 실패 · ${lr.msg || ''}`) : '아직 자동으로 만든 기록이 없어요. Supabase 예약 실행(Cron) 설정 후 다음 날부터 기록돼요.';
+  const nowBtn = h('button', { class: 'btn ghost sm', onclick: async () => {
+    const done = busy(nowBtn, '만드는 중…');
+    try {
+      const ids = [...new Set(dueItems(5).concat((App.lessons[0] ? (App.lessons[0].grammarIds || []).concat(App.lessons[0].vocabIds || []) : []).slice(0, 8), pickStudyIds(targetLevel(), 10)))].slice(0, 18);
+      const b = await generateQuestions({ ids, level: targetLevel(), source: 'daily', title: '바로 만든 문제' });
+      toast(`문제 ${b.qs.length}개를 만들었어요.`);
+    } catch (e) { toast(aiErrorText(e), 'err'); } finally { done(); }
+  } }, '지금 한 번 만들기');
+  right.append(card('매일 아침 자동 문제', '',
+    h('p', { class: 'muted sm' }, '정한 시각에 최근 수업·복습·오답·약한 영역을 바탕으로 15~20문항을 미리 만들어 둬요. 안 푼 문제가 40개 넘게 쌓여 있으면 그날은 건너뛰어요.'),
+    h('div', { class: 'row wrap' }, h('label', {}, onIn, ' 자동으로 만들기'), h('label', {}, '시각 ', hourSel)),
+    h('div', { class: 'kv' }, h('span', {}, '최근 실행'), h('b', { class: lr && !lr.ok ? 'red' : '' }, lastLine)),
+    h('div', { class: 'row end' }, nowBtn, h('button', { class: 'btn sm', onclick: () => { App.state.autoGen = Object.assign({}, App.state.autoGen || {}, { on: onIn.checked, hour: +hourSel.value }); save(onIn.checked ? `매일 ${hourSel.selectedOptions[0].textContent}에 문제를 만들어요.` : '자동 만들기를 껐어요.'); } }, '저장'))));
+
+  // 5. AI 연결 테스트
   const out = h('div', { class: 'aitest' });
   const tbtn = h('button', { class: 'btn sm', onclick: async () => {
     out.innerHTML = ''; const done = busy(tbtn, '확인 중…');
@@ -834,7 +856,7 @@ function renderSettings(v) {
   } }, 'AI 연결 테스트');
   right.append(card('AI 연결', '', h('p', { class: 'muted sm' }, '문제 만들기가 안 될 때 눌러 보세요. 키·함수·모델 중 어디가 문제인지 보여줘요.'), h('div', { class: 'row end' }, tbtn), out));
 
-  // 5. 백업 · 로그아웃
+  // 6. 백업 · 로그아웃
   const impIn = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: async () => {
     const f = impIn.files[0]; impIn.value = ''; if (!f) return;
     let rows; try { const j = JSON.parse(await f.text()); rows = Array.isArray(j) ? j : j.docs; } catch { toast('백업 파일을 읽지 못했어요.', 'err'); return; }

@@ -1,7 +1,7 @@
 /* 일본어 공부방 · quiz runner */
 'use strict';
 function fmtPrompt(s) {
-  return esc(s).replace(/\[u\]([\s\S]*?)\[\/u\]/g, '<u class="tgt">$1</u>').replace(/★/g, '<span class="star">★</span>').replace(/\n/g, '<br>');
+  return esc(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '<ruby>$1<rt>$2</rt></ruby>').replace(/\[u\]([\s\S]*?)\[\/u\]/g, '<u class="tgt">$1</u>').replace(/★/g, '<span class="star">★</span>').replace(/\n/g, '<br>');
 }
 function qRef(q) { return q.bank ? { bank: q.bank, id: q.id } : { ...q }; }
 function resolveRef(r) {
@@ -31,7 +31,7 @@ function player(q, { exam = false } = {}) {
   return wrap;
 }
 function scriptBox(q) {
-  return h('div', { class: 'script' }, h('b', {}, '스크립트'), ...(q.script || []).map(l => h('div', { lang: 'ja' }, (l.s && l.s !== 'N' ? l.s + '：' : '') + l.t)));
+  return h('div', { class: 'script' }, h('b', {}, '스크립트'), ...(q.script || []).map(l => h('div', { lang: 'ja', html: esc(l.s && l.s !== 'N' ? l.s + '：' : '') + fmtPrompt(l.t) })));
 }
 
 function runQuiz(root, qs, opts = {}) {
@@ -40,7 +40,12 @@ function runQuiz(root, qs, opts = {}) {
   const res = []; let i = 0, startAt = Date.now(), timerId = null;
   root.innerHTML = '';
   const box = h('div', { class: 'quiz' });
-  root.append(box);
+  const useLookup = mode !== 'exam' && opts.lookup !== false;
+  const furiOn = () => mode !== 'exam' && App.state.furigana !== false;
+  const lk = useLookup ? makeLookup() : null;
+  const layout = h('div', { class: 'qlayout' + (lk ? ' with-lookup' : '') + (furiOn() ? '' : ' no-furi') }, box, lk ? lk.panel : null, lk ? lk.fab : null);
+  root.append(layout);
+  if (lk) { lk.bindSelection(box); root.closest('.ovin')?.classList.add('wide'); root.closest('.cols-test')?.classList.add('running'); }
   if (!qs.length) { box.append(h('div', { class: 'empty' }, opts.emptyText || '풀 문제가 없어요.')); return; }
   if (opts.timerMin) {
     const end = startAt + opts.timerMin * 60000;
@@ -59,13 +64,26 @@ function runQuiz(root, qs, opts = {}) {
       h('div', { class: 'qbar' }, h('div', { style: `width:${i / qs.length * 100}%` })),
       h('span', { class: 'qn' }, `${i + 1} / ${qs.length}`),
       opts.timerMin ? h('span', { class: 'qtimer' }, '') : null);
+    if (mode !== 'exam') {
+      const fg = h('button', { class: 'fg' + (furiOn() ? ' on' : ''), title: '한자 위 히라가나 켜기/끄기', onclick: () => { App.state.furigana = !furiOn(); saveState(); layout.classList.toggle('no-furi', !furiOn()); fg.classList.toggle('on', furiOn()); fg.textContent = furiOn() ? 'ふりがな 켜짐' : 'ふりがな 꺼짐'; } }, furiOn() ? 'ふりがな 켜짐' : 'ふりがな 꺼짐');
+      head.append(fg);
+    }
     const chips = h('div', { class: 'qchips' }, h('span', { class: 'chip ' + (q.area === 'l' ? 'c-red' : q.area === 'g' ? 'c-blue' : q.area === 'r' ? 'c-amber' : 'c-green') }, AREA[q.area] || ''), q.sub ? h('span', { class: 'chip c-gray', lang: 'ja' }, q.sub) : null);
     box.append(head, chips);
     if (q.passage) box.append(h('div', { class: 'passage', lang: 'ja', html: fmtPrompt(q.passage) }));
     box.append(h('div', { class: 'qprompt', lang: 'ja', html: fmtPrompt(q.prompt) }));
     if (q.area === 'l' && q.script) box.append(player(q, { exam: mode === 'exam' }));
     const list = h('div', { class: 'opts' });
-    q.choices.forEach((c, k) => list.append(h('button', { class: 'opt', lang: 'ja', onclick: () => choose(k) }, h('span', { class: 'k' }, String(k + 1)), h('span', { class: 'ot' }, c))));
+    q.choices.forEach((c, k) => {
+      let pressT = null, longPressed = false;
+      const b = h('button', { class: 'opt', lang: 'ja', onclick: e => { if (longPressed) { longPressed = false; e.preventDefault(); return; } choose(k); } }, h('span', { class: 'k' }, String(k + 1)), h('span', { class: 'ot', html: fmtPrompt(c) }));
+      if (lk) {
+        b.addEventListener('contextmenu', e => { e.preventDefault(); lk.search(c); });
+        b.addEventListener('touchstart', () => { longPressed = false; pressT = setTimeout(() => { longPressed = true; lk.search(c); }, 550); }, { passive: true });
+        ['touchend', 'touchmove', 'touchcancel'].forEach(ev => b.addEventListener(ev, () => clearTimeout(pressT), { passive: true }));
+      }
+      list.append(b);
+    });
     box.append(list);
     const foot = h('div', { class: 'qfoot' });
     box.append(foot);
@@ -109,9 +127,15 @@ function runQuiz(root, qs, opts = {}) {
       for (const [q, r] of wrongs) box.append(h('div', { class: 'wrongcard' },
         q.passage ? h('div', { class: 'passage sm', lang: 'ja', html: fmtPrompt(q.passage) }) : null,
         h('div', { class: 'qprompt sm', lang: 'ja', html: fmtPrompt(q.prompt) }),
-        h('div', { class: 'wa', lang: 'ja' }, h('span', { class: 'no' }, '내 답: ' + (r && r.pick >= 0 ? q.choices[r.pick] : '무응답')), h('span', { class: 'ok' }, '정답: ' + q.choices[q.ans])),
+        h('div', { class: 'wa', lang: 'ja' }, h('span', { class: 'no' }, '내 답: ' + (r && r.pick >= 0 ? plainJa(q.choices[r.pick]) : '무응답')), h('span', { class: 'ok' }, '정답: ' + plainJa(q.choices[q.ans]))),
         q.expl ? h('div', { class: 'muted', lang: 'ja' }, q.expl) : null,
         q.script ? scriptBox(q) : null));
+    }
+    if (lk && lk.looked.length) {
+      const ids = lk.looked.filter(x => x.id && !x.added).map(x => x.id);
+      box.append(h('div', { class: 'lk-sum' }, h('b', {}, `이번 시험에서 단어 ${lk.looked.length}개를 찾아봤어요`),
+        h('div', { class: 'chips' }, lk.looked.map(x => h('span', { class: 'chip ' + (x.added ? 'c-green' : 'c-gray'), lang: 'ja', title: x.m }, x.w))),
+        ids.length ? h('button', { class: 'btn ghost sm', onclick: e => { ids.forEach(id => lk.addToReview(id)); flushSaves(); e.currentTarget.disabled = true; e.currentTarget.textContent = '복습 목록에 넣었어요'; } }, `${ids.length}개 모두 내일 복습에 넣기`) : null));
     }
     box.append(h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: () => opts.onDone ? opts.onDone(res, qs) : null }, opts.doneText || '완료')));
     flushSaves();

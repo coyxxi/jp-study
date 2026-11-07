@@ -115,6 +115,46 @@ window.JP_CONFIG = {
 - **iPhone (Safari):** 공유 → 홈 화면에 추가
 - **Android (Chrome):** 메뉴 → 홈 화면에 추가
 
+## 8단계 (선택). 매일 아침 자동 문제 만들기
+
+정한 시각(기본 오전 7시)에 Supabase가 문제를 미리 만들어 둬요. 시각은 공부방 **설정 → 매일 아침 자동 문제**에서 바꿔요.
+
+**함수 만들기**
+
+1. Supabase **Edge Functions → Deploy a new function → Via Editor**를 누르고, 이름을 정확히 `daily`로 정합니다.
+2. 이 폴더의 `supabase/functions/daily/index.ts` 내용을 붙여넣고 **Deploy**를 누릅니다.
+3. 배포된 `daily` 함수의 **Details(또는 Settings)**에서 **Verify JWT(Enforce JWT verification)**를 **끄고** 저장합니다.
+   - 이 함수는 JWT 대신 아래 비밀값으로 확인해요.
+
+**비밀값 정하기**
+
+4. **Edge Functions → Secrets**에 이름 `CRON_SECRET`, 값에 아무 긴 문자열(예: 영문·숫자 30자 이상)을 넣고 저장합니다. 이 값은 6번에서 한 번 더 써요.
+
+**예약 실행 등록**
+
+5. **Integrations → Cron**으로 갑니다. 처음이면 **Enable**을 누르고, **Create job**을 누릅니다.
+6. 아래처럼 채우고 저장합니다.
+
+| 항목 | 값 |
+|---|---|
+| Name | `daily-questions` |
+| Schedule | `0 * * * *` (매시 정각) |
+| Type | Supabase Edge Function |
+| Method | POST |
+| Edge Function | `daily` |
+| Timeout | 5000 |
+| HTTP Headers | 이름 `x-cron-secret`, 값은 4번에서 정한 문자열 |
+
+**바로 시험해 보기**
+
+7. `daily` 함수 화면의 **Test**에서 아래처럼 넣고 실행합니다.
+   - Method: POST
+   - Header: `x-cron-secret` = 4번 값
+   - Query: `force` = `1`
+8. 응답에 `"started":1`이 나오면 성공이에요. 1~2분 뒤 공부방 **설정 → 매일 아침 자동 문제**의 "최근 실행"에 결과가 떠요.
+
+> Cron은 매시 정각마다 함수를 부르지만, 함수는 설정한 시각(한국 시간)에만 실제로 문제를 만들어요. 안 푼 문제가 40개 넘게 쌓여 있으면 그날은 건너뛰어요.
+
 ---
 
 ## 알아두면 좋은 것
@@ -142,6 +182,8 @@ data/examples.json            예문 889개 (기존 시트)
 data/seed-learned.json        기존 시트에서 배운 항목 목록
 supabase/schema.sql           2단계에서 실행할 SQL
 supabase/functions/ai/index.ts  4단계 AI 함수
+supabase/functions/daily/index.ts  8단계 매일 자동 문제
+js/lookup.js                  시험 중 단어 찾기
 ```
 
 **데이터 출처**

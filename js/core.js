@@ -238,10 +238,34 @@ function reportBad(q) {
   if (bq) { bq.bad = true; b._dirty = true; scheduleBankSave(); toast('이 문제를 은행에서 뺐어요.'); }
 }
 
-const Q_SPEC = `각 문제는 이 JSON 형태를 따르세요:
+const READ_LEN = {
+  5: '짧은 글(短文): 4~6문장, 80~150자 / 중간 글(中文): 8~12문장, 약 250자',
+  4: '짧은 글(短文): 5~7문장, 100~200자 / 중간 글(中文): 10~15문장, 약 350자',
+  3: '짧은 글(短文): 약 150~200자 / 중간 글(中文): 약 350자',
+  2: '짧은 글(短文): 약 200자 / 중간 글(中文): 약 500자 / 긴 글(長文): 약 900자',
+  1: '짧은 글(短文): 약 200자 / 중간 글(中文): 약 500자 / 긴 글(長文): 약 1000자',
+};
+const qSpec = (level = 5) => `각 문제는 이 JSON 형태를 따르세요:
 {"area":"v|g|r|l","sub":"유형 이름(일본어, 예: 文脈規定)","items":["관련 항목 id"],"prompt":"문제 문장(일본어). 밑줄 대상은 [u]단어[/u], 빈칸은 （　　）, 文の組み立て는 ＿＿ ＿＿ ★ ＿＿ 형태","passage":"독해 지문(일본어, 독해만)","script":[{"s":"男|女|N","t":"대사(일본어, 청해만)"}],"choices":["보기1","보기2","보기3","보기4"],"ans":0,"expl":"한국어 해설 1~2문장"}
-규칙: choices는 정확히 4개, ans는 0~3 정답 위치(위치를 고르게 섞기), 오답 보기는 그럴듯하지만 명확히 틀려야 함, 정답은 오직 하나. 청해는 prompt에 질문을 쓰고 script에 대화를 쓰며, 보기는 짧게. 문맥이 자연스러운 실제 생활 장면 문장을 쓰고, 같은 문형을 반복하지 마세요. 설명 외의 텍스트 없이 JSON 배열만 답하세요.`;
+규칙: choices는 정확히 4개, ans는 0~3 정답 위치(위치를 고르게 섞기), 오답 보기는 그럴듯하지만 명확히 틀려야 함, 정답은 오직 하나. 청해는 prompt에 질문을 쓰고 script에 대화를 쓰며, 보기는 짧게. 문맥이 자연스러운 실제 생활 장면 문장을 쓰고, 같은 문형을 반복하지 마세요.
+독해 지문 길이(JLPT N${level} 기준): ${READ_LEN[level] || READ_LEN[5]}. 유형 이름에 短文/中文을 맞춰 쓰세요.
+후리가나: prompt, passage, choices, script의 대사에 나오는 모든 한자 단어에 {漢字|よみ} 형식으로 히라가나 읽기를 붙이세요. 예: {毎朝|まいあさ}{起|お}きます. 단, 漢字読み 유형에서 [u]밑줄[/u] 대상 단어와 表記 유형의 보기처럼 읽기 자체가 정답인 곳에는 붙이지 마세요.
+설명 외의 텍스트 없이 JSON 배열만 답하세요.`;
+const Q_SPEC = qSpec(5);
 
+/* 후리가나: {漢字|よみ} 표기. 단어장에 한 가지 읽기만 있는 단어는 그 읽기로 맞춰요 */
+const FURI_RE = /\{([^{}|]+)\|([^{}|]+)\}/g;
+let _readMap = null;
+function readMap() {
+  if (_readMap) return _readMap;
+  const m = new Map();
+  for (const v of allVocab()) { if (!/[\u4e00-\u9faf]/.test(v.w) || !v.r) continue; const k = v.w.split(/[;；]/)[0].trim(); if (!m.has(k)) m.set(k, new Set()); m.get(k).add(v.r.split(/[;；]/)[0].trim()); }
+  return (_readMap = m);
+}
+function fixFuri(t) {
+  return String(t || '').replace(FURI_RE, (all, k, r) => { const set = readMap().get(k); if (set && set.size === 1) { const only = [...set][0]; if (only !== r && /^[\u3040-\u309f]+$/.test(only)) return `{${k}|${only}}`; } return all; });
+}
+const plainJa = t => String(t || '').replace(FURI_RE, '$1').replace(/\[\/?u\]/g, '');
 function unwrapArray(v) {
   if (Array.isArray(v)) return v;
   if (v && typeof v === 'object') {
@@ -271,7 +295,7 @@ function validateQs(arr, allowIds) {
     if (q.area === 'l' && (!Array.isArray(q.script) || !q.script.length)) continue;
     if (q.area === 'r' && !q.passage) q.area = 'g';
     q.items = (Array.isArray(q.items) ? q.items : []).filter(id => App.byId[id] && (!allowIds || allowIds.has(id))).slice(0, 4);
-    ok.push({ id: uid('q'), area: q.area, sub: String(q.sub || '').slice(0, 20), items: q.items, prompt: String(q.prompt || '').slice(0, 400), passage: q.passage ? String(q.passage).slice(0, 1200) : undefined, script: q.area === 'l' ? q.script.slice(0, 12).map(l => ({ s: String(l.s || 'N').slice(0, 2), t: String(l.t || '').slice(0, 200) })) : undefined, choices: q.choices.map(c => String(c).slice(0, 120)), ans, expl: String(q.expl || '').slice(0, 300) });
+    ok.push({ id: uid('q'), area: q.area, sub: String(q.sub || '').slice(0, 20), items: q.items, prompt: fixFuri(String(q.prompt || '').slice(0, 600)), passage: q.passage ? fixFuri(String(q.passage).slice(0, 2400)) : undefined, script: q.area === 'l' ? q.script.slice(0, 14).map(l => ({ s: String(l.s || 'N').slice(0, 2), t: fixFuri(String(l.t || '').slice(0, 300)) })) : undefined, choices: q.choices.map(c => fixFuri(String(c).slice(0, 160))), ans, expl: String(q.expl || '').slice(0, 300) });
   }
   return ok;
 }
@@ -301,7 +325,7 @@ ${itemsForPrompt(shuffle(ids).slice(0, 14))}
 어휘·문법 수준: N${level} 범위 안에서만.
 만들 문제 (총 ${n}개): ${Object.entries(b).map(([k, v]) => `${k} ${v}개`).join(', ')}
 각 문제의 items에는 위 목록의 id 중 실제로 묻는 항목을 넣으세요.
-${Q_SPEC}`;
+${qSpec(level)}`;
     try { const arr = await aiJSON(prompt, { signal, modelTier: 'default' }); return validateQs(arr, null); }
     catch (e) { if (e?.code === 'cancelled' || e?.code === 'not_granted' || e?.code === 'no_key') throw e; console.warn('batch failed', e); App.lastAIError = e; return []; }
     finally { done++; BG.set(`문제 만드는 중… ${done}/${total}`); onProgress && onProgress(done, total); }
@@ -386,7 +410,7 @@ const TTS = {
     const next = () => {
       if (i >= lines.length) { onDone && onDone(true); return; }
       const l = lines[i++];
-      const u = new SpeechSynthesisUtterance(l.t);
+      const u = new SpeechSynthesisUtterance(plainJa(l.t));
       u.lang = 'ja-JP'; u.rate = rate;
       const v = l.s === '男' ? male : l.s === '女' ? female : (female || male);
       if (v) u.voice = v;

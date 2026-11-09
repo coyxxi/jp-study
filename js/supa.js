@@ -79,20 +79,21 @@ function makeSample(sb) {
     if (opts.images) {
       const list = Array.from(opts.images.length != null ? opts.images : [opts.images]).slice(0, 6);
       images = [];
-      for (const f of list) { const b = await shrinkImage(f, 1600, 0.82); images.push({ mime: 'image/jpeg', data: await blobToB64(b) }); }
+      for (const f of list) { const b = await shrinkImage(f, 1400, 0.8); images.push({ mime: 'image/jpeg', data: await blobToB64(b) }); }
     }
     const aborted = new Promise((_, rej) => opts.signal?.addEventListener('abort', () => rej({ code: 'cancelled' })));
     let data, error;
     for (let attempt = 0; attempt < 2; attempt++) {
       ({ data, error } = await Promise.race([sb.functions.invoke('ai', { body: { input, json, tier: opts.modelTier || 'default', images } }), aborted]));
       const st = error?.context?.status;
-      if (!(st === 503 || st === 502) || attempt === 1) break;
-      await new Promise(r => setTimeout(r, 2500)); // 서버가 붐비면 한 번 더 시도
+      const netFail = error && !st; // 응답 자체를 못 받음 (연결 끊김·시간 초과)
+      if (!(st === 503 || st === 502 || (netFail && !images)) || attempt === 1) break;
+      await new Promise(r => setTimeout(r, 2500)); // 서버가 붐비거나 연결이 끊기면 한 번 더 시도
     }
     if (error) {
       let body = null; try { body = await error.context?.json(); } catch { }
       const st = error.context?.status;
-      throw { code: body?.code || (st === 401 ? 'not_granted' : st === 429 ? 'rate_limited' : st === 503 ? 'overloaded' : 'upstream'), message: body?.error || error.message };
+      throw { code: body?.code || (!st ? 'network' : st === 401 ? 'not_granted' : st === 429 ? 'rate_limited' : st === 503 ? 'overloaded' : st === 504 || st === 546 ? 'timeout' : 'upstream'), message: body?.error || error.message };
     }
     if (data?.error) throw { code: data.code || 'upstream', message: data.error, text: data.text };
     const text = data?.text || '';

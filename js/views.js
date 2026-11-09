@@ -343,8 +343,43 @@ function noteView(n, date, unit) {
     ...(n.apps || []).slice(0, 6).map(a => h('div', { class: 'ex', lang: 'ja' }, a)),
     n.caution ? h('div', { class: 'warnbox' }, '헷갈리기 쉬운 점: ', h('span', { lang: 'ja' }, n.caution)) : null);
 }
+function lessonEditor(L, onSaved) {
+  const bl = [...books()];
+  let curBook = bl.find(b => (L.unit || '').startsWith(b));
+  if (!curBook) { curBook = (L.unit || '').replace(/\s*\d+\s*과\s*$/, '').trim() || bl[0]; if (!bl.includes(curBook)) bl.push(curBook); }
+  const curNo = +((L.unit || '').match(/(\d+)\s*과/) || [])[1] || 1;
+  const bookSel = h('select', { id: 'leBook' }, bl.map(b => h('option', { value: b, selected: b === curBook }, b)));
+  const noIn = h('input', { id: 'leNo', type: 'number', min: 1, max: 60, value: curNo });
+  const dateIn = h('input', { id: 'leDate', type: 'date', value: L.date || App.today });
+  const saveBtn = h('button', { class: 'btn sm', onclick: async () => {
+    const n = Math.max(1, +noIn.value || 1);
+    const unit = `${bookSel.value} ${n}과`, date = dateIn.value || L.date;
+    const done = busy(saveBtn, '저장 중…');
+    try {
+      const wasLatest = App.lessons[0]?.id === L.id;
+      L.unit = unit; L.date = date;
+      const { id, ...data } = L;
+      await writeDoc('lessons/' + L.id, data);
+      App.lessons.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      // 이 수업으로 만든 문제 묶음의 이름도 같이 바꿈
+      for (const b of App.banks) if (b.source === L.id && b.title !== unit) { b.title = unit; b._dirty = true; }
+      scheduleBankSave();
+      if (wasLatest || App.lessons[0]?.id === L.id) { App.state.unit = App.lessons[0].unit; saveState(); }
+      await flushSaves();
+      toast('수업 정보를 고쳤어요.');
+      onSaved && onSaved();
+    } catch { toast('저장하지 못했어요.', 'err'); done(); }
+  } }, '저장');
+  return h('div', { class: 'lessonedit' },
+    h('div', { class: 'row tight gap' }, bookSel, noIn, h('span', { class: 'muted' }, '과'), dateIn),
+    h('div', { class: 'row end' }, h('button', { class: 'btn ghost sm', onclick: () => onSaved && onSaved(true) }, '취소'), saveBtn));
+}
 function showLesson(L) {
-  const body = h('div', { class: 'lessonview' }, noteView(L.note || {}, L.date, L.unit));
+  const body = h('div', { class: 'lessonview' });
+  const top = h('div', { class: 'row lv-top' }, h('button', { class: 'btn ghost sm', onclick: () => {
+    top.replaceWith(lessonEditor(L, cancelled => { m.close(); if (!cancelled) nav(App.tab, App.sub); showLesson(L); }));
+  } }, '✏️ 단원·날짜 수정'));
+  body.append(top, noteView(L.note || {}, L.date, L.unit));
   const items = [...(L.grammarIds || []), ...(L.vocabIds || [])].map(id => App.byId[id]).filter(Boolean);
   if (items.length) body.append(h('h3', { class: 'mini' }, '이 수업의 항목'), h('div', { class: 'chips' }, items.map(it => h('span', { class: 'chip ' + STATUS_CLS[status(it.id)], lang: 'ja', title: it.m }, itemLabel(it)))));
   if ((L.photos || []).length && App.assets) {

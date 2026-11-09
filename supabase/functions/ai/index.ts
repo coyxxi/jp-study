@@ -38,21 +38,30 @@ Deno.serve(async (req) => {
   const first = tier === "quick" ? MODEL_QUICK : MODEL_DEFAULT;
   const models = [first, ...FALLBACKS.filter((m) => m !== first)];
 
+  // Supabase 무료 플랜은 함수 하나가 약 150초 안에 끝나야 해요. 그 전에 반드시 답을 돌려주도록 시간 예산을 둬요.
+  const started = Date.now(), BUDGET = 115_000;
+  const left = () => BUDGET - (Date.now() - started);
   let lastErr = "no model available", lastCode = "upstream";
   for (const model of models) {
-    // 붐빌 때(503)는 같은 모델로 한 번 더, 그래도 안 되면 다음 모델로 넘어가요
+    if (left() < 8_000) { lastCode = lastCode === "upstream" ? "timeout" : lastCode; break; }
     let r: Response | null = null, j: any = {};
     for (let attempt = 0; attempt < 2; attempt++) {
-      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": KEY },
-        body,
-      });
-      j = await r.json().catch(() => ({}));
-      if (![500, 503].includes(r.status) || attempt === 1) break;
+      try {
+        r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": KEY },
+          body,
+          signal: AbortSignal.timeout(Math.max(5_000, left())),
+        });
+        j = await r.json().catch(() => ({}));
+      } catch {
+        r = null; lastErr = "AI 응답이 너무 오래 걸렸어요"; lastCode = "timeout"; break;
+      }
+      // 붐빌 때(503)는 시간이 남아 있으면 같은 모델로 한 번 더
+      if (![500, 503].includes(r.status) || attempt === 1 || Date.now() - started > 30_000) break;
       await new Promise((res) => setTimeout(res, 1500));
     }
-    if (!r) continue;
+    if (!r) { if (left() < 8_000) break; continue; }
     const msg: string = j?.error?.message ?? `HTTP ${r.status}`;
     if (r.status === 404 || (r.status === 400 && /model/i.test(msg))) { lastErr = msg; continue; }
     if ([429, 500, 502, 503, 504].includes(r.status) || /overload|high demand|unavailable|quota/i.test(msg)) {
@@ -66,5 +75,5 @@ Deno.serve(async (req) => {
     if (finish === "MAX_TOKENS") return reply({ error: "output too long", code: "truncated", text, model }, 200);
     return reply({ text, model, finish });
   }
-  return reply({ error: lastErr, code: lastCode }, lastCode === "rate_limited" ? 429 : 503);
+  return reply({ error: lastErr, code: lastCode }, lastCode === "rate_limited" ? 429 : lastCode === "timeout" ? 504 : 503);
 });

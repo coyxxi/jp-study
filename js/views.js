@@ -661,6 +661,8 @@ function renderRole(v) {
   const usedCard = card('이번 대화에서 쓴 문법'); side.append(usedCard);
   const lv = targetLevel();
   let current = null, turns = [], fixes = [], used = {};
+  // 장면을 바꾸면 session이 바뀌어서, 이전 장면의 늦게 온 답이 새 장면에 섞이지 않아요
+  let session = 0, waiting = false;
   SCENES.forEach(s => {
     const locked = s.lv < lv - 1;
     sceneCard.append(h('button', { class: 'sc' + (locked ? ' lock' : ''), onclick: () => !locked && open(s) }, h('div', { class: 'ic' }, s.ic), h('div', { class: 't' }, s.t, h('p', {}, s.d)), h('span', { class: 'chip c-gray' }, locked ? `N${s.lv} 이후` : `N${s.lv}`)));
@@ -669,10 +671,12 @@ function renderRole(v) {
   chatCard.append(h('div', { class: 'empty' }, '오른쪽에서 장면을 골라 주세요.'));
   if (!App.sample) chatCard.append(aiMissing());
   async function open(s) {
-    current = s; fixes = []; used = {};
+    const my = ++session; waiting = false;
+    current = s; fixes = []; used = {}; turns = [];
     $$('.sc', sceneCard).forEach((b, i) => b.classList.toggle('on', SCENES[i] === s));
     let saved = null;
     if (App.db) { const snap = await App.db.doc('talk/' + s.id).get().catch(() => null); if (snap?.exists) saved = JSON.parse(JSON.stringify(snap.data())); }
+    if (my !== session) return; // 불러오는 사이 다른 장면을 고름
     turns = saved?.turns || [];
     drawChat();
     if (!turns.length) send(null);
@@ -684,7 +688,7 @@ function renderRole(v) {
   function drawChat() {
     chatCard.innerHTML = '';
     const s = current;
-    chatCard.append(h('div', { class: 'scene' }, h('div', { class: 'ic' }, s.ic), h('div', {}, h('b', {}, s.t), h('p', {}, s.role)), h('div', { class: 'r' }, h('span', { class: 'chip c-gray' }, `${turns.filter(t => t.role === 'user' && !t.sys).length} 턴`), h('button', { class: 'btn ghost sm', onclick: () => { turns = []; App.db && App.db.doc('talk/' + s.id).delete().catch(() => {}); drawChat(); send(null); } }, '처음부터'))));
+    chatCard.append(h('div', { class: 'scene' }, h('div', { class: 'ic' }, s.ic), h('div', {}, h('b', {}, s.t), h('p', {}, s.role)), h('div', { class: 'r' }, h('span', { class: 'chip c-gray' }, `${turns.filter(t => t.role === 'user' && !t.sys).length} 턴`), h('button', { class: 'btn ghost sm', onclick: () => { session++; waiting = false; turns = []; App.db && App.db.doc('talk/' + s.id).delete().catch(() => {}); drawChat(); send(null); } }, '처음부터'))));
     const msgs = h('div', { class: 'msgs' }); chatCard.append(msgs);
     for (const t of turns) {
       if (t.sys) continue;
@@ -724,25 +728,31 @@ function renderRole(v) {
   }
   async function send(text) {
     if (!App.sample) return;
-    if (text) turns.push({ role: 'user', content: text });
+    if (waiting) { toast('상대가 답하는 중이에요. 답이 오면 보내 주세요.'); return; }
+    const scene = current, my = session, myTurns = turns;
+    if (text) myTurns.push({ role: 'user', content: text });
     drawChat();
     const msgs = $('.msgs', chatCard); const thinking = h('div', { class: 'm ai' }, h('div', { class: 'bub muted' }, '…')); msgs.append(thinking); msgs.scrollTop = msgs.scrollHeight;
-    const conv = [{ role: 'user', content: rules(current) + (turns.length ? '' : '\n\n장면을 시작하세요. 첫 대사를 하세요.') }];
-    if (turns.length) conv.push({ role: 'assistant', content: '{"reply":"(시작)","ko":"","fix":null,"used":[],"end":false}' });
-    for (const t of turns.slice(-16)) conv.push(t.role === 'assistant' ? { role: 'assistant', content: JSON.stringify({ reply: t.reply, ko: t.ko, fix: null, used: [], end: false }) } : { role: 'user', content: t.content });
+    const conv = [{ role: 'user', content: rules(scene) + (myTurns.length ? '' : '\n\n장면을 시작하세요. 첫 대사를 하세요.') }];
+    if (myTurns.length) conv.push({ role: 'assistant', content: '{"reply":"(시작)","ko":"","fix":null,"used":[],"end":false}' });
+    for (const t of myTurns.slice(-16)) conv.push(t.role === 'assistant' ? { role: 'assistant', content: JSON.stringify({ reply: t.reply, ko: t.ko, fix: null, used: [], end: false }) } : { role: 'user', content: t.content });
     if (conv[conv.length - 1].role !== 'user') conv.push({ role: 'user', content: '(계속)' });
+    waiting = true;
     try {
       const r = await aiJSON(conv, { modelTier: 'quick', cache: false });
       if (text && r.fix && r.fix.right) {
-        const last = turns[turns.length - 1]; last.fix = { right: String(r.fix.right), why: String(r.fix.why || ''), wrong: String(r.fix.wrong || '') };
+        const last = myTurns[myTurns.length - 1]; last.fix = { right: String(r.fix.right), why: String(r.fix.why || ''), wrong: String(r.fix.wrong || '') };
         App.drill.push({ id: uid('d'), ko: String(r.fix.ko || r.fix.why || ''), jp: String(r.fix.right), from: 'role', at: App.today, ok: 0, ng: 0 }); markDirty('drill');
       }
-      if (text) turns[turns.length - 1].used = Array.isArray(r.used) ? r.used.slice(0, 4).map(String) : [];
-      turns.push({ role: 'assistant', reply: String(r.reply || ''), ko: String(r.ko || ''), end: !!r.end });
-      if (App.db) writeDoc('talk/' + current.id, { turns: turns.slice(-40), at: App.today }).catch(() => {});
+      if (text) myTurns[myTurns.length - 1].used = Array.isArray(r.used) ? r.used.slice(0, 4).map(String) : [];
+      myTurns.push({ role: 'assistant', reply: String(r.reply || ''), ko: String(r.ko || ''), end: !!r.end });
+      // 답은 항상 "보낸 장면"에만 저장 (그사이 다른 장면으로 바꿨어도 섞이지 않게)
+      if (App.db) writeDoc('talk/' + scene.id, { turns: myTurns.slice(-40), at: App.today }).catch(() => {});
+      if (my !== session) return;
       drawChat();
       if (r.end) toast('장면이 끝났어요. 수고했어요!');
-    } catch (e) { thinking.remove(); toast(aiErrorText(e), 'err'); }
+    } catch (e) { if (my === session) { thinking.remove(); toast(aiErrorText(e), 'err'); } }
+    finally { if (my === session) waiting = false; }
   }
 }
 function renderPrep(v) {

@@ -329,7 +329,7 @@ ${itemsForPrompt(shuffle(ids).slice(0, 14))}
 만들 문제 (총 ${n}개): ${Object.entries(b).map(([k, v]) => `${k} ${v}개`).join(', ')}
 각 문제의 items에는 위 목록의 id 중 실제로 묻는 항목을 넣으세요.
 ${qSpec(level)}`;
-    try { const arr = await aiJSON(prompt, { signal, modelTier: 'default' }); return validateQs(arr, null); }
+    try { const arr = await aiJSON(prompt, { signal, modelTier: 'default', async: true, kind: 'questions' }); return validateQs(arr, null); }
     catch (e) { if (e?.code === 'cancelled' || e?.code === 'not_granted' || e?.code === 'no_key') throw e; console.warn('batch failed', e); App.lastAIError = e; return []; }
     finally { done++; BG.set(`문제 만드는 중… ${done}/${total}`); onProgress && onProgress(done, total); }
   };

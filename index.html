@@ -302,6 +302,8 @@ ruby{ruby-position:over}rt{font-size:.5em;color:var(--muted);font-weight:400;use
   const uid = session.user.id;
   App.db = makeDb(sb, uid); App.sample = makeSample(sb); App.assets = makeAssets(sb, uid);
   try { await firstRunSeed(); await loadAll(); } catch (e) { toast('저장된 기록을 불러오지 못했어요. 새로고침해 주세요.', 'err'); }
+  // 6시간 넘게 남아 있는 AI 작업 기록은 정리
+  App.db.collection('jobs').get().then(snap => snap.docs.forEach(d => { const x = d.data() || {}; if (Date.now() - (x.at || 0) > 6 * 3600e3 && d.id !== App.state.pendingLesson?.jobId) App.db.doc('jobs/' + d.id).delete().catch(() => {}); })).catch(() => {});
   const base = location.origin + location.pathname.replace(/[^/]*$/, '');
   if (App.state.site !== base) { App.state.site = base; saveState(); }
   App.ready = true;

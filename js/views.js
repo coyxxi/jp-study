@@ -224,30 +224,62 @@ function renderRecord(v, sub = 'lesson') {
   for (const L of App.lessons.slice(0, 30)) hist.append(h('button', { class: 'histcard', onclick: () => showLesson(L) }, h('span', { class: 'muted sm' }, L.date + ' · ' + (L.unit || '')), h('b', { lang: 'ja' }, L.note?.title || '수업'), h('span', { class: 'muted sm' }, `단어 ${(L.vocabIds || []).length} · 문법 ${(L.grammarIds || []).length}`)));
 
   let ctl = null;
+  const setStatusBox = (title, text, extra) => { statusBox.innerHTML = ''; statusBox.append(h('div', { class: 'status' }, h('b', {}, title), text, extra || null)); };
+  const fmtSec = ms => `${Math.round(ms / 1000)}초`;
   async function extract() {
     const unit = `${bookSel.value} ${lessonNo.value}과`;
     if (!files.length && !memo.value.trim()) { toast('사진이나 메모를 넣어 주세요.'); return; }
-    const done = busy(runBtn, 'AI가 정리하는 중… (최대 1~2분)');
+    const done = busy(runBtn, 'AI에게 맡기는 중…');
     ctl = new AbortController();
-    statusBox.innerHTML = ''; statusBox.append(h('div', { class: 'status' }, h('b', {}, '사진을 읽고 있어요'), '단어·문법·예문을 추출하고 수업 노트를 쓰는 중이에요.', h('button', { class: 'btn ghost sm', onclick: () => ctl.abort() }, '중지')));
-    const prompt = `일본어 학원 수업 자료(교재 "${unit}", 선생님 프린트)를 정리해 주세요. 학습자는 한국인이고 JLPT N5→N2를 준비 중입니다.
-${files.length ? `첨부 사진 ${files.length}장은 교재/프린트 페이지입니다. 사진에 실제로 보이는 내용만 추출하세요.` : ''}
-학습자 메모: ${memo.value.trim() || '(없음)'}
-
-이 JSON 하나만 답하세요:
-{"grammar":[{"p":"문형(예: 〜たことがある)","m":"한국어 뜻","f":"접속 공식","level":"N5|N4|N3|N2","apps":[{"p":"응용 문형","m":"뜻"}]}],
-"vocab":[{"w":"표기(한자 포함)","r":"히라가나 읽기","m":"한국어 뜻","level":"N5|N4|N3|N2","unsure":false,"why":"unsure일 때 이유(사진 흐림, 표기 불일치 등)"}],
-"examples":[{"j":"일본어 예문","k":"한국어 뜻"}],
-"note":{"title":"대표 문형","sub":"접속 · 의미 한 줄","conj":"활용 예 한 줄(예: 行く → 行った → 行ったことがある)","examples":[{"j":"핵심 예문","k":"뜻"}],"apps":["응용 문형 · 설명"],"caution":"헷갈리기 쉬운 점 한두 문장"}}
-규칙: 단어는 수업에서 새로 나온 것 위주로 최대 25개, 예문은 최대 20개. 읽기나 표기가 확실하지 않으면 unsure를 true로. 한국어는 자연스럽게.`;
+    const stopBtn = h('button', { class: 'btn ghost sm', onclick: () => ctl.abort() }, '그만 기다리기');
     try {
-      const out = await aiJSON(prompt, { images: files.length ? files : undefined, signal: ctl.signal, modelTier: 'default' });
-      showExtract(out, unit);
-      statusBox.innerHTML = ''; statusBox.append(h('div', { class: 'status' }, h('b', {}, 'AI 정리 완료'), `문법 ${(out.grammar || []).length} · 단어 ${(out.vocab || []).length} · 예문 ${(out.examples || []).length} 추출`));
-    } catch (e) { statusBox.innerHTML = ''; statusBox.append(h('div', { class: 'note warn' }, aiErrorText(e))); }
-    finally { done(); }
+      // 사진은 먼저 저장해 둬요. 새로고침해도 반영할 때 그대로 쓸 수 있어요.
+      setStatusBox('사진 올리는 중', '수업 사진을 저장하고 있어요.');
+      const photos = [];
+      if (App.assets && files.length) for (const f of files) { try { photos.push((await App.assets.upload(f)).id); } catch { } }
+      const meta = { unit, date: dateIn.value || App.today, memo: memo.value.trim(), photos, at: Date.now() };
+      const prompt = lessonPrompt(unit, files.length, meta.memo);
+      const opts = { images: files.length ? files : undefined, modelTier: 'vision', kind: 'lesson', signal: ctl.signal };
+      let out = null;
+      for (let attempt = 0; attempt < 3 && !out; attempt++) {
+        if (attempt) { setStatusBox('다시 맡기는 중', `AI 서버가 바빠서 ${attempt}번째 다시 시도해요.`, stopBtn); await sleep(attempt === 1 ? 4000 : 10000); }
+        try {
+          const jobId = await App.sample.submitJSON(prompt, opts);
+          App.state.pendingLesson = { ...meta, jobId }; saveState(); flushSaves();
+          setStatusBox('AI가 정리하는 중', '화면을 끄거나 다른 탭에 가도 괜찮아요. 돌아오면 결과가 이어서 나와요.', stopBtn);
+          out = await App.sample.waitJSON(jobId, { signal: ctl.signal, onWait: ms => { const b = $('.status b', statusBox); if (b) b.textContent = `AI가 정리하는 중 · ${fmtSec(ms)}`; } });
+        } catch (e) {
+          if (e?.code === 'cancelled' || !['overloaded', 'timeout', 'network', 'upstream'].includes(e?.code) || attempt === 2) throw e;
+        }
+      }
+      finishExtract(out, meta);
+    } catch (e) {
+      if (e?.code === 'cancelled') { setStatusBox('기다리기를 멈췄어요', '정리는 서버에서 계속돼요. 나중에 이 화면에 다시 오면 결과를 이어서 받아요.'); }
+      else { delete App.state.pendingLesson; saveState(); statusBox.innerHTML = ''; statusBox.append(h('div', { class: 'note warn' }, aiErrorText(e))); }
+    } finally { done(); }
   }
-  function showExtract(out, unit) {
+  function finishExtract(out, meta) {
+    App.state.pendingLesson = { ...meta, jobId: null, out }; saveState(); flushSaves();
+    if (App.tab !== 'record') toast('수업 정리가 끝났어요. 기록 탭에서 확인하고 반영해 주세요.');
+    if (!statusBox.isConnected) return;
+    setStatusBox('AI 정리 완료', `문법 ${(out.grammar || []).length} · 단어 ${(out.vocab || []).length} · 예문 ${(out.examples || []).length} 추출 · 오른쪽에서 확인하고 반영해 주세요`);
+    showExtract(out, meta.unit, meta);
+  }
+  // 새로고침·다른 기기에서 열었을 때: 맡겨 둔 정리를 이어받기
+  const pend = App.state.pendingLesson;
+  if (pend && App.sample) {
+    const discard = h('button', { class: 'btn ghost sm', onclick: () => { delete App.state.pendingLesson; saveState(); flushSaves(); nav('record'); } }, '버리기');
+    if (pend.out) {
+      setStatusBox('반영하지 않은 정리 결과가 있어요', `${pend.unit} · ${md(pend.date)} · 확인하고 반영하거나 버릴 수 있어요.`, discard);
+      showExtract(pend.out, pend.unit, pend);
+    } else if (pend.jobId) {
+      setStatusBox('맡겨 둔 정리 결과를 확인하는 중', `${pend.unit} · 잠시만 기다려 주세요.`, discard);
+      App.sample.waitJSON(pend.jobId, { onWait: ms => { const b = $('.status b', statusBox); if (b) b.textContent = `맡겨 둔 정리 확인 중 · ${fmtSec(ms)}`; } })
+        .then(out => finishExtract(out, pend))
+        .catch(e => { delete App.state.pendingLesson; saveState(); flushSaves(); if (statusBox.isConnected) { statusBox.innerHTML = ''; statusBox.append(h('div', { class: 'note warn' }, '맡겨 둔 정리가 실패했어요. ' + aiErrorText(e) + ' 사진을 다시 넣고 정리해 주세요.')); } });
+    }
+  }
+  function showExtract(out, unit, meta = {}) {
     const G = (out.grammar || []).slice(0, 8), V = (out.vocab || []).slice(0, 30), E = (out.examples || []).slice(0, 25);
     const gRows = G.map(g => ({ g, match: matchGrammar(g.p), on: true, apps: (g.apps || []).slice(0, 6).map(a => ({ a, match: matchGrammar(a.p), on: true })) }));
     const vRows = V.map(x => { const m = matchVocab(x.w, x.r); return { x, match: m, on: !x.unsure }; });
@@ -277,7 +309,7 @@ ${files.length ? `첨부 사진 ${files.length}장은 교재/프린트 페이지
     mid.append(h('button', { class: 'linkbtn', onclick: () => exList.hidden = !exList.hidden }, `예문 ${E.length}개 보기`), exList);
     const applyBtn = h('button', { class: 'btn', onclick: () => apply() }, '확인하고 반영');
     mid.append(h('div', { class: 'bottom' }, h('p', {}, '반영하면 항목들이 "학원에서 배움"으로 바뀌고, 이 범위의 문제가 자동으로 만들어져요.'), applyBtn));
-    right.innerHTML = ''; right.append(noteView(out.note || {}, App.today, unit));
+    right.innerHTML = ''; right.append(noteView(out.note || {}, meta.date || App.today, unit));
     async function apply() {
       const done = busy(applyBtn, '반영 중…');
       try {
@@ -290,23 +322,35 @@ ${files.length ? `첨부 사진 ${files.length}장은 교재/프린트 페이지
         const uniq = [...new Set(gIds.concat(vIds))];
         uniq.forEach(id => setStatus(id, 'a'));
         if (App.custom._dirty) { delete App.custom._dirty; await saveCustom(); }
-        let photos = [];
-        if (App.assets && files.length) { for (const f of files) { try { const a = await App.assets.upload(f); photos.push(a.id); } catch { } } }
+        let photos = meta.photos || [];
+        if (!meta.photos && App.assets && files.length) { for (const f of files) { try { const a = await App.assets.upload(f); photos.push(a.id); } catch { } } }
         const id = uid('L');
-        const L = { date: dateIn.value || App.today, unit, memo: memo.value.trim(), photos, note: out.note || {}, grammarIds: [...new Set(gIds)], vocabIds: [...new Set(vIds)], exCount: E.length, examples: E.slice(0, 25) };
+        const L = { date: meta.date || dateIn.value || App.today, unit, memo: meta.memo ?? memo.value.trim(), photos, note: out.note || {}, grammarIds: [...new Set(gIds)], vocabIds: [...new Set(vIds)], exCount: E.length, examples: E.slice(0, 25) };
         await writeDoc('lessons/' + id, L);
         App.lessons.unshift({ id, ...L });
         for (const e of E.slice(0, 15)) App.drill.push({ id: uid('d'), ko: e.k, jp: e.j, from: 'lesson', at: App.today, ok: 0, ng: 0 });
         markDirty('drill');
-        App.state.unit = unit; App.state.lastLesson = id; saveState(); await flushSaves();
+        App.state.unit = unit; App.state.lastLesson = id; delete App.state.pendingLesson; saveState(); await flushSaves();
         App.dayDoc = null; if (App.db) App.db.doc('day/' + App.today).delete().catch(() => {});
         toast(`반영했어요. 항목 ${uniq.length}개가 "학원에서 배움"이 됐어요.`);
         mid.innerHTML = ''; mid.append(h('h2', {}, '반영 완료'), h('p', {}, `문법 ${gIds.length} · 단어 ${vIds.length} · 예문 ${E.length}`), h('div', { class: 'status' }, h('b', {}, '문제 만드는 중…'), '이 범위의 실전 문제를 은행에 쌓고 있어요. 다른 화면으로 가도 괜찮아요.'));
         generateQuestions({ ids: uniq.slice(0, 24), level: guessLevel(uniq), source: id, title: unit }).then(b => { toast(`${unit} 문제 ${b.qs.length}개를 만들었어요.`); if (App.tab === 'record') nav('record'); })
           .catch(err => toast('문제 생성 실패: ' + aiErrorText(err), 'err'));
-      } catch (e) { toast('반영 중 오류가 났어요.', 'err'); done(); }
+      } catch (e) { console.error(e); toast('반영 중 오류가 났어요.', 'err'); done(); }
     }
   }
+}
+function lessonPrompt(unit, nPhotos, memoText) {
+  return `일본어 학원 수업 자료(교재 "${unit}", 선생님 프린트)를 정리해 주세요. 학습자는 한국인이고 JLPT N5→N2를 준비 중입니다.
+${nPhotos ? `첨부 사진 ${nPhotos}장은 교재/프린트 페이지입니다. 사진에 실제로 보이는 내용만 추출하세요.` : ''}
+학습자 메모: ${memoText || '(없음)'}
+
+이 JSON 하나만 답하세요:
+{"grammar":[{"p":"문형(예: 〜たことがある)","m":"한국어 뜻","f":"접속 공식","level":"N5|N4|N3|N2","apps":[{"p":"응용 문형","m":"뜻"}]}],
+"vocab":[{"w":"표기(한자 포함)","r":"히라가나 읽기","m":"한국어 뜻","level":"N5|N4|N3|N2","unsure":false,"why":"unsure일 때 이유(사진 흐림, 표기 불일치 등)"}],
+"examples":[{"j":"일본어 예문","k":"한국어 뜻"}],
+"note":{"title":"대표 문형","sub":"접속 · 의미 한 줄","conj":"활용 예 한 줄(예: 行く → 行った → 行ったことがある)","examples":[{"j":"핵심 예문","k":"뜻"}],"apps":["응용 문형 · 설명"],"caution":"헷갈리기 쉬운 점 한두 문장"}}
+규칙: 단어는 수업에서 새로 나온 것 위주로 최대 25개, 예문은 최대 20개. 읽기나 표기가 확실하지 않으면 unsure를 true로. 한국어는 자연스럽게.`;
 }
 function guessLevel(ids) { const ls = ids.map(id => App.byId[id]?.l).filter(l => l >= 2); if (!ls.length) return targetLevel(); const c = {}; ls.forEach(l => c[l] = (c[l] || 0) + 1); return +Object.entries(c).sort((a, b) => b[1] - a[1])[0][0]; }
 const normP = s => String(s || '').replace(/[〜～~\s・()（）]/g, '').replace(/[ーｰ]/g, 'ー');
@@ -702,7 +746,7 @@ function renderPrep(v) {
     const done = busy(btn, '만드는 중…');
     try {
       const r = await aiJSON(`한국인 일본어 학습자(JLPT N${targetLevel()}, 배운 문법: ${learnedContext(targetLevel(), 40)})가 원어민 없는 일본어 프리토킹 모임에서 쓸 표현을 준비합니다. 주제: ${topic.value || '자유 주제'}.
-배운 범위 안에서 바로 쓸 수 있는 표현 6개와, 상대에게 던질 질문 3개를 주세요. JSON만: {"say":[{"jp":"","ko":"","tip":"쓰는 상황 한 줄"}],"ask":[{"jp":"","ko":""}]}`, { modelTier: 'default' });
+배운 범위 안에서 바로 쓸 수 있는 표현 6개와, 상대에게 던질 질문 3개를 주세요. JSON만: {"say":[{"jp":"","ko":"","tip":"쓰는 상황 한 줄"}],"ask":[{"jp":"","ko":""}]}`, { modelTier: 'default', async: true, kind: 'prep' });
       out.innerHTML = '';
       const all = [...(r.say || []), ...(r.ask || [])];
       out.append(h('h3', { class: 'mini' }, '말해 볼 표현'), ...(r.say || []).map(x => h('div', { class: 'mm' }, h('div', { class: 'jpl', lang: 'ja' }, x.jp, h('button', { class: 'say', onclick: () => TTS.speak([{ s: 'N', t: x.jp }]) }, '🔈')), h('p', {}, x.ko + (x.tip ? ' · ' + x.tip : '')))),
@@ -878,9 +922,9 @@ function renderSettings(v) {
       catch (e) { line(false, '빠른 모델', aiErrorText(e)); showRaw(e); return; }
       t0 = Date.now();
       try {
-        const arr = await App.sample.json(`JLPT N5 문법 문제 2개를 만드세요.\n${Q_SPEC}`, { modelTier: 'default', cache: false });
+        const arr = await App.sample.json(`JLPT N5 문법 문제 2개를 만드세요.\n${Q_SPEC}`, { modelTier: 'default', async: true, kind: 'test' });
         const qs = validateQs(arr, null);
-        line(qs.length > 0, '문제 만들기 모델', [App.lastAI?.model, ((Date.now() - t0) / 1000).toFixed(1) + '초', `문제 ${qs.length}개 읽음`].filter(Boolean).join(' · '));
+        line(qs.length > 0, '문제 만들기 (맡겨 두기 방식)', [App.lastAI?.model, ((Date.now() - t0) / 1000).toFixed(1) + '초', `문제 ${qs.length}개 읽음`].filter(Boolean).join(' · '));
         if (!qs.length) showRaw({ text: App.lastAI?.text });
       } catch (e) { line(false, '문제 만들기 모델', aiErrorText(e)); showRaw(e); }
     } finally { done(); }

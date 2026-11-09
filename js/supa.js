@@ -73,41 +73,93 @@ const blobToB64 = b => new Promise((res, rej) => { const r = new FileReader(); r
 
 /* AI: Supabase Edge Function "ai"가 Gemini를 대신 호출 (API 키는 서버에만 보관) */
 function makeSample(sb) {
-  async function call(input, opts = {}, json = false) {
+  const errOf = async error => {
+    let body = null; try { body = await error.context?.json(); } catch { }
+    const st = error.context?.status;
+    return { code: body?.code || (!st ? 'network' : st === 401 ? 'not_granted' : st === 429 ? 'rate_limited' : st === 503 ? 'overloaded' : st === 504 || st === 546 ? 'timeout' : 'upstream'), message: body?.error || error.message };
+  };
+  const RETRYABLE = new Set(['overloaded', 'timeout', 'network', 'upstream']);
+  async function prepImages(opts) {
+    if (!opts.images) return undefined;
+    const list = Array.from(opts.images.length != null ? opts.images : [opts.images]).slice(0, 6);
+    const out = [];
+    for (const f of list) { const b = await shrinkImage(f, 1400, 0.8); out.push({ mime: 'image/jpeg', data: await blobToB64(b) }); }
+    return out;
+  }
+  const abortP = signal => new Promise((_, rej) => signal?.addEventListener('abort', () => rej({ code: 'cancelled' })));
+  const wait = (ms, signal) => new Promise((res, rej) => { const t = setTimeout(res, ms); signal?.addEventListener('abort', () => { clearTimeout(t); rej({ code: 'cancelled' }); }); });
+
+  // 1) 바로 받기 (짧은 작업)
+  async function callNow(input, opts = {}, json = false) {
     if (opts.signal?.aborted) throw { code: 'cancelled' };
-    let images;
-    if (opts.images) {
-      const list = Array.from(opts.images.length != null ? opts.images : [opts.images]).slice(0, 6);
-      images = [];
-      for (const f of list) { const b = await shrinkImage(f, 1400, 0.8); images.push({ mime: 'image/jpeg', data: await blobToB64(b) }); }
-    }
-    const aborted = new Promise((_, rej) => opts.signal?.addEventListener('abort', () => rej({ code: 'cancelled' })));
+    const images = await prepImages(opts);
     let data, error;
     for (let attempt = 0; attempt < 2; attempt++) {
-      ({ data, error } = await Promise.race([sb.functions.invoke('ai', { body: { input, json, tier: opts.modelTier || 'default', images } }), aborted]));
+      ({ data, error } = await Promise.race([sb.functions.invoke('ai', { body: { input, json, tier: opts.modelTier || 'default', images } }), abortP(opts.signal)]));
       const st = error?.context?.status;
-      const netFail = error && !st; // 응답 자체를 못 받음 (연결 끊김·시간 초과)
+      const netFail = error && !st;
       if (!(st === 503 || st === 502 || (netFail && !images)) || attempt === 1) break;
-      await new Promise(r => setTimeout(r, 2500)); // 서버가 붐비거나 연결이 끊기면 한 번 더 시도
+      await wait(2500, opts.signal);
     }
-    if (error) {
-      let body = null; try { body = await error.context?.json(); } catch { }
-      const st = error.context?.status;
-      throw { code: body?.code || (!st ? 'network' : st === 401 ? 'not_granted' : st === 429 ? 'rate_limited' : st === 503 ? 'overloaded' : st === 504 || st === 546 ? 'timeout' : 'upstream'), message: body?.error || error.message };
-    }
+    if (error) throw await errOf(error);
     if (data?.error) throw { code: data.code || 'upstream', message: data.error, text: data.text };
-    const text = data?.text || '';
-    App.lastAI = { at: Date.now(), model: data?.model, text: text.slice(0, 4000) };
-    opts.onText && opts.onText({ text, delta: text });
-    return { text, truncated: false };
+    return { text: data?.text || '', model: data?.model };
   }
+
+  // 2) 맡겨 두기 (긴 작업): 작업 번호를 받고, 결과가 저장될 때까지 몇 초마다 확인
+  async function submit(input, opts = {}, json = false) {
+    const images = opts._images || await prepImages(opts);
+    const { data, error } = await Promise.race([sb.functions.invoke('ai', { body: { input, json, tier: opts.modelTier || 'default', images, async: true, kind: opts.kind || '' } }), abortP(opts.signal)]);
+    if (error) throw await errOf(error);
+    if (data?.error) throw { code: data.code || 'upstream', message: data.error };
+    if (!data?.jobId) throw { code: 'upstream', message: '작업 번호를 받지 못했어요' };
+    return data.jobId;
+  }
+  async function waitJob(jobId, opts = {}) {
+    const startedAt = Date.now();
+    for (;;) {
+      await wait(Date.now() - startedAt < 20000 ? 2000 : 3500, opts.signal);
+      let snap;
+      try { snap = await App.db.doc('jobs/' + jobId).get(); } catch { continue; } // 잠깐 끊겨도 계속 확인
+      const d = snap.exists ? snap.data() : null;
+      opts.onWait && opts.onWait(Date.now() - startedAt, d);
+      if (d && d.status === 'done') { App.db.doc('jobs/' + jobId).delete().catch(() => {}); return { text: d.text || '', model: d.model }; }
+      if (d && d.status === 'error') { App.db.doc('jobs/' + jobId).delete().catch(() => {}); throw { code: d.code || 'upstream', message: d.error || '', text: d.text }; }
+      // 서버가 강제로 끝나 결과를 못 남긴 경우 (약 3분)
+      const age = Date.now() - (d?.at || startedAt);
+      if (age > 190000) { App.db.doc('jobs/' + jobId).delete().catch(() => {}); throw { code: 'timeout', message: '작업이 끝나지 않았어요' }; }
+    }
+  }
+  async function callAsync(input, opts = {}, json = false) {
+    const images = await prepImages(opts);
+    let last;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const id = await submit(input, { ...opts, _images: images }, json);
+        opts.onJob && opts.onJob(id);
+        return await waitJob(id, opts);
+      } catch (e) {
+        last = e;
+        if (e?.code === 'cancelled' || !RETRYABLE.has(e?.code) || attempt === 2) throw e;
+        opts.onRetry && opts.onRetry(attempt + 1, e);
+        await wait(attempt === 0 ? 4000 : 10000, opts.signal); // 붐비면 조금 쉬었다가 다시 맡기기
+      }
+    }
+    throw last;
+  }
+
+  async function call(input, opts = {}, json = false) {
+    const r = await (opts.async && App.db ? callAsync(input, opts, json) : callNow(input, opts, json));
+    App.lastAI = { at: Date.now(), model: r.model, text: r.text.slice(0, 4000) };
+    opts.onText && opts.onText({ text: r.text, delta: r.text });
+    return { text: r.text, truncated: false };
+  }
+  const toJSON = text => { const v = parseLooseJSON(text); if (v === undefined) throw { code: 'invalid_json', text, message: text ? '' : '빈 응답' }; return v; };
   const sample = (input, opts) => call(input, opts, false);
-  sample.json = async (input, opts) => {
-    const { text } = await call(input, opts, true);
-    const v = parseLooseJSON(text);
-    if (v === undefined) throw { code: 'invalid_json', text, message: text ? '' : '빈 응답' };
-    return v;
-  };
+  sample.json = async (input, opts) => toJSON((await call(input, opts, true)).text);
+  // 수업 정리처럼 새로고침 뒤에도 이어받아야 하는 작업용
+  sample.submitJSON = (input, opts = {}) => submit(input, opts, true);
+  sample.waitJSON = async (jobId, opts = {}) => { const r = await waitJob(jobId, opts); App.lastAI = { at: Date.now(), model: r.model, text: r.text.slice(0, 4000) }; return toJSON(r.text); };
   sample.limits = async () => ({ images: { maxCount: 6 } });
   return sample;
 }

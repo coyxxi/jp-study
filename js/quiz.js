@@ -31,7 +31,7 @@ function player(q, { exam = false } = {}) {
   return wrap;
 }
 function scriptBox(q) {
-  return h('div', { class: 'script' }, h('b', {}, '스크립트'), ...(q.script || []).map(l => h('div', { lang: 'ja', html: esc(l.s && l.s !== 'N' ? l.s + '：' : '') + fmtPrompt(l.t) })));
+  return h('div', { class: 'script' }, h('b', {}, '스크립트'), ...(q.script || []).map(l => h('div', { lang: 'ja', html: esc(l.s && l.s !== 'N' ? l.s + '：' : '') + fmtPrompt(q.rule ? l.t : autoFuri(l.t)) })));
 }
 
 function runQuiz(root, qs, opts = {}) {
@@ -70,13 +70,16 @@ function runQuiz(root, qs, opts = {}) {
     }
     const chips = h('div', { class: 'qchips' }, h('span', { class: 'chip ' + (q.area === 'l' ? 'c-red' : q.area === 'g' ? 'c-blue' : q.area === 'r' ? 'c-amber' : 'c-green') }, AREA[q.area] || ''), q.sub ? h('span', { class: 'chip c-gray', lang: 'ja' }, q.sub) : null);
     box.append(head, chips);
-    if (q.passage) box.append(h('div', { class: 'passage', lang: 'ja', html: fmtPrompt(q.passage) }));
-    box.append(h('div', { class: 'qprompt', lang: 'ja', html: fmtPrompt(q.prompt) }));
+    const auto = !q.rule; // 단어 퀴즈(읽기·표기)는 후리가나가 정답을 알려 주므로 제외
+    const autoChoices = auto && !/漢字読み|表記|読み方|漢字/.test(q.sub || '');
+    const af = (t, ok = auto) => ok ? autoFuri(t) : t;
+    if (q.passage) box.append(h('div', { class: 'passage', lang: 'ja', html: fmtPrompt(af(q.passage)) }));
+    box.append(h('div', { class: 'qprompt', lang: 'ja', html: fmtPrompt(af(q.prompt, auto && !/漢字読み/.test(q.sub || ''))) }));
     if (q.area === 'l' && q.script) box.append(player(q, { exam: mode === 'exam' }));
     const list = h('div', { class: 'opts' });
     q.choices.forEach((c, k) => {
       let pressT = null, longPressed = false;
-      const b = h('button', { class: 'opt', lang: 'ja', onclick: e => { if (longPressed) { longPressed = false; e.preventDefault(); return; } choose(k); } }, h('span', { class: 'k' }, String(k + 1)), h('span', { class: 'ot', html: fmtPrompt(c) }));
+      const b = h('button', { class: 'opt', lang: 'ja', onclick: e => { if (longPressed) { longPressed = false; e.preventDefault(); return; } choose(k); } }, h('span', { class: 'k' }, String(k + 1)), h('span', { class: 'ot', html: fmtPrompt(af(c, autoChoices)) }));
       if (lk) {
         b.addEventListener('contextmenu', e => { e.preventDefault(); lk.search(c); });
         b.addEventListener('touchstart', () => { longPressed = false; pressT = setTimeout(() => { longPressed = true; lk.search(c); }, 550); }, { passive: true });

@@ -309,7 +309,17 @@ ruby{ruby-position:over}rt{font-size:.5em;color:var(--muted);font-weight:400;use
   App.ready = true;
   let start = 'today'; try { start = localStorage.getItem('jp.tab') || 'today'; } catch { }
   nav(TABS.some(t => t[0] === start) ? start : 'today');
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && ymd() !== App.today) { App.today = ymd(); App.dayDoc = null; nav(App.tab); } });
+  // 다른 기기에서 공부한 내용이 보이도록, 한동안 안 보다가 돌아오면 최신 기록을 다시 불러와요
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); flushSaves(); return; }
+    const newDay = ymd() !== App.today;
+    if (newDay) { App.today = ymd(); App.dayDoc = null; }
+    const busyUI = document.querySelector('.overlay, .modal-bg');
+    if ((newDay || Date.now() - hiddenAt > 120000) && !busyUI) {
+      try { await flushSaves(); await loadAll(); App.dayDoc = null; nav(App.tab, App.sub); } catch { }
+    }
+  });
 })();
 </script>
 </body>

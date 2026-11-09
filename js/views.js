@@ -48,7 +48,7 @@ async function getDay() {
   if (App.dayDoc?.date === App.today) return App.dayDoc;
   let d = null;
   if (App.db) { const s = await App.db.doc(path).get().catch(() => null); if (s?.exists) d = JSON.parse(JSON.stringify(s.data())); }
-  if (!d) { d = buildDay(); if (App.db) writeDoc(path, d).catch(() => {}); }
+  if (!d) { d = buildDay(); if (App.db) mergeWrite(path, cur => cur || d).then(m => { if (m && m.sec && App.dayDoc === d && !Object.values(d.sec).some(x => x.done)) App.dayDoc = m; }).catch(() => {}); }
   App.dayDoc = d; return d;
 }
 function buildDay() {
@@ -74,7 +74,13 @@ function buildDay() {
     },
   };
 }
-function saveDay() { if (App.dayDoc) writeDoc('day/' + App.today, App.dayDoc).catch(() => {}); }
+function saveDay() {
+  if (!App.dayDoc) return;
+  const local = clone(App.dayDoc);
+  // 다른 기기에서 끝낸 파트는 끝난 상태로 유지
+  mergeWrite('day/' + local.date, cur => { if (!cur || !cur.sec) return local; for (const k of Object.keys(local.sec)) { if (!cur.sec[k]) cur.sec[k] = local.sec[k]; else if (local.sec[k].done) cur.sec[k].done = true; } return cur; })
+    .then(m => { if (m && App.dayDoc?.date === m.date) for (const k of Object.keys(m.sec || {})) if (m.sec[k]?.done && App.dayDoc.sec[k]) App.dayDoc.sec[k].done = true; }).catch(() => {});
+}
 
 async function renderToday(v) {
   const dd = daysBetween(App.today, examDate());
@@ -154,11 +160,13 @@ async function startSection(key) {
   if (key === 'drill') { const o = overlay('순간 작문'); drillRunner(o.body, s.ids.length ? s.ids : null, () => { finish(); o.close(); nav('today'); }, () => { o.close(); nav('today'); }); return; }
   let qs = [];
   if (key === 'review') qs = s.ids.map(id => ruleQ(id));
-  if (key === 'lesson') { qs = s.refs.map(resolveRef).filter(Boolean); if (qs.length < 3) qs = qs.concat(s.lessonIds.slice(0, 6).map(id => ruleQ(id))); }
-  if (key === 'listen') qs = s.refs.map(resolveRef).filter(Boolean);
+  // 세트를 만든 뒤에 문제 은행이 채워졌으면, 지금 있는 문제로 채워요
+  const topUp = (refs, want, filter) => { const have = new Set(refs.map(r => r.id)); const add = shuffle(bankQuestions(q => !q.seen && !have.has(q.id) && filter(q))).slice(0, Math.max(0, want - refs.length)); if (add.length) { refs.push(...add.map(q => ({ bank: q.bank, id: q.id }))); saveDay(); } };
+  if (key === 'lesson') { topUp(s.refs, 6, q => q.area !== 'l'); qs = s.refs.map(resolveRef).filter(Boolean); if (qs.length < 3) qs = qs.concat(s.lessonIds.slice(0, 6).map(id => ruleQ(id))); }
+  if (key === 'listen') { topUp(s.refs, 2, q => q.area === 'l'); qs = s.refs.map(resolveRef).filter(Boolean); }
   qs = qs.filter(Boolean);
   if (!qs.length) {
-    if (key === 'listen' || key === 'lesson') return offerGenerate(key === 'listen' ? 'l' : 'mix', () => { App.dayDoc = null; writeDoc('day/' + App.today, buildDay()).then(() => nav('today')); });
+    if (key === 'listen' || key === 'lesson') return offerGenerate(key === 'listen' ? 'l' : 'mix', () => { App.dayDoc = null; const nd = buildDay(); mergeWrite('day/' + App.today, cur => { if (cur?.sec) for (const k of Object.keys(nd.sec)) if (cur.sec[k]?.done) nd.sec[k] = cur.sec[k]; return nd; }).then(() => nav('today')); });
     toast('풀 문제가 없어요.'); return;
   }
   const o = overlay({ review: '복습 단어', lesson: '수업 문항', listen: '청해' }[key]);

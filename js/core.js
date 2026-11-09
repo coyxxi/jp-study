@@ -77,33 +77,126 @@ function ensureP(id) {
 const dirty = new Set();
 let saveTimer = null;
 function markDirty(key) { dirty.add(key); clearTimeout(saveTimer); saveTimer = setTimeout(flushSaves, 900); }
+const clone = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v));
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// 마지막으로 서버와 맞춘 상태. 저장할 때는 이것과 달라진 부분만 서버 최신 내용 위에 합쳐요.
+// (휴대폰과 PC를 같이 열어 둬도 한쪽이 다른 쪽 기록을 덮어쓰지 않게)
+App.base = { prog: {}, logs: {}, state: {}, wrongLen: 0, drill: {}, banks: {} };
 const writeChain = {};
-function writeDoc(path, data, merge = false) {
-  if (!App.db) return Promise.resolve();
+function chain(path, job) {
   const prev = writeChain[path] || Promise.resolve();
-  const next = prev.catch(() => {}).then(async () => {
-    const ref = App.db.doc(path);
-    try {
-      if (merge) { const s = await ref.get(); if (s.exists) return ref.update(data); }
-      return await ref.set(data);
-    } catch (e) {
-      if (e?.code === 'unavailable') { await sleep(600 + Math.random() * 800); return merge ? ref.update(data) : ref.set(data); }
-      if (e?.code === 'quota_exceeded') toast('저장 공간이 가득 찼어요. 오래된 기록을 정리해 주세요.', 'err');
-      else toast('저장에 실패했어요 (' + (e?.code || 'error') + ')', 'err');
-      throw e;
-    }
-  });
+  const next = prev.catch(() => {}).then(job);
   writeChain[path] = next;
   return next;
+}
+function saveError(e) {
+  if (e?.code === 'quota_exceeded') toast('저장 공간이 가득 찼어요. 오래된 기록을 정리해 주세요.', 'err');
+  else toast('저장에 실패했어요 (' + (e?.code || 'error') + '). 잠시 후 다시 저장할게요.', 'err');
+}
+function writeDoc(path, data) {
+  if (!App.db) return Promise.resolve();
+  return chain(path, async () => {
+    const ref = App.db.doc(path);
+    try { return await ref.set(data); }
+    catch (e) {
+      if (e?.code === 'unavailable') { await sleep(600 + Math.random() * 800); return ref.set(data); }
+      saveError(e); throw e;
+    }
+  });
+}
+// 서버의 최신 내용을 읽고 → 합치고 → 저장 (같은 문서는 차례대로)
+function mergeWrite(path, fn) {
+  if (!App.db) return Promise.resolve(null);
+  return chain(path, async () => {
+    const ref = App.db.doc(path);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const s = await ref.get();
+        const merged = fn(s.exists ? clone(s.data()) : null);
+        if (merged) await ref.set(merged);
+        return merged;
+      } catch (e) {
+        if (attempt === 0 && (e?.code === 'unavailable' || e?.code === 'invalid_argument')) { await sleep(800); continue; }
+        saveError(e); throw e;
+      }
+    }
+  });
+}
+async function flushProg(c) {
+  const local = App.prog[c] || {}, base = App.base.prog[c] || {};
+  const snap = clone(local);
+  const changed = Object.keys(snap).filter(id => !same(snap[id], base[id]));
+  if (!changed.length) return;
+  const merged = await mergeWrite('prog/' + c, cur => { const items = cur?.items || {}; for (const id of changed) items[id] = snap[id]; return { items }; });
+  if (!merged) return;
+  App.base.prog[c] = clone(merged.items);
+  const now = App.prog[c] || (App.prog[c] = {});
+  for (const [id, v] of Object.entries(merged.items)) if (same(now[id], snap[id])) now[id] = clone(v); // 그사이 바뀐 건 그대로 두고 다음에 저장
+}
+async function flushLog(m) {
+  const local = App.logs[m] || {}, base = App.base.logs[m] || {};
+  const add = {};
+  for (const [d, arr] of Object.entries(local)) { const n = (base[d] || []).length; if (arr.length > n) add[d] = clone(arr.slice(n)); }
+  if (!Object.keys(add).length) return;
+  const merged = await mergeWrite('log/' + m, cur => { const days = cur?.days || {}; for (const [d, arr] of Object.entries(add)) days[d] = (days[d] || []).concat(arr); return { days }; });
+  if (!merged) return;
+  const after = App.logs[m] || {};
+  const extra = {}; // 저장하는 사이 새로 푼 기록
+  for (const [d, arr] of Object.entries(after)) { const sent = (base[d] || []).length + (add[d] || []).length; if (arr.length > sent) extra[d] = arr.slice(sent); }
+  App.base.logs[m] = clone(merged.days);
+  const view = clone(merged.days);
+  for (const [d, arr] of Object.entries(extra)) view[d] = (view[d] || []).concat(arr);
+  App.logs[m] = view;
+}
+async function flushWrong() {
+  const add = clone(App.wrong.slice(App.base.wrongLen));
+  if (!add.length) return;
+  const merged = await mergeWrite('state/wrong', cur => ({ list: (cur?.list || []).concat(add).slice(-300) }));
+  if (!merged) return;
+  const extra = App.wrong.slice(App.base.wrongLen + add.length);
+  App.wrong = clone(merged.list).concat(extra);
+  App.base.wrongLen = merged.list.length;
+}
+async function flushDrill() {
+  const base = App.base.drill;
+  const snap = clone(App.drill);
+  const changed = snap.filter(d => !same(d, base[d.id]));
+  if (!changed.length) return;
+  const merged = await mergeWrite('state/drill', cur => {
+    const list = cur?.list || [];
+    for (const d of changed) { const i = list.findIndex(x => x.id === d.id); if (i >= 0) list[i] = d; else list.push(d); }
+    return { list: list.slice(-400) };
+  });
+  if (!merged) return;
+  const snapById = Object.fromEntries(snap.map(d => [d.id, d]));
+  const later = App.drill.filter(d => !same(d, snapById[d.id]));
+  App.base.drill = Object.fromEntries(merged.list.map(d => [d.id, clone(d)]));
+  const list = clone(merged.list);
+  for (const d of later) { const i = list.findIndex(x => x.id === d.id); if (i >= 0) list[i] = d; else list.push(d); }
+  App.drill = list;
+}
+async function flushState() {
+  const base = App.base.state, snap = clone(App.state);
+  const keys = [...new Set([...Object.keys(snap), ...Object.keys(base)])].filter(k => !same(snap[k], base[k]));
+  if (!keys.length) return;
+  const merged = await mergeWrite('state/main', cur => { const st = cur || {}; for (const k of keys) { if (k in snap) st[k] = snap[k]; else delete st[k]; } return st; });
+  if (!merged) return;
+  App.base.state = clone(merged);
+  for (const k of new Set([...Object.keys(merged), ...Object.keys(App.state)])) {
+    if (!same(App.state[k], snap[k])) continue; // 그사이 바뀐 값은 유지
+    if (k in merged) App.state[k] = clone(merged[k]); else delete App.state[k];
+  }
 }
 async function flushSaves() {
   const keys = [...dirty]; dirty.clear();
   for (const k of keys) {
-    if (k.startsWith('prog:')) { const c = k.slice(5); await writeDoc('prog/' + c, { items: App.prog[c] || {} }).catch(() => {}); }
-    else if (k.startsWith('log:')) { const m = k.slice(4); await writeDoc('log/' + m, { days: App.logs[m] || {} }).catch(() => {}); }
-    else if (k === 'wrong') await writeDoc('state/wrong', { list: App.wrong.slice(-300) }).catch(() => {});
-    else if (k === 'drill') await writeDoc('state/drill', { list: App.drill.slice(-400) }).catch(() => {});
-    else if (k === 'state') await writeDoc('state/main', App.state).catch(() => {});
+    try {
+      if (k.startsWith('prog:')) await flushProg(k.slice(5));
+      else if (k.startsWith('log:')) await flushLog(k.slice(4));
+      else if (k === 'wrong') await flushWrong();
+      else if (k === 'drill') await flushDrill();
+      else if (k === 'state') await flushState();
+    } catch { dirty.add(k); clearTimeout(saveTimer); saveTimer = setTimeout(flushSaves, 5000); }
   }
 }
 window.addEventListener('pagehide', () => { if (dirty.size) flushSaves(); });
@@ -232,7 +325,21 @@ let bankTimer = null;
 function scheduleBankSave() {
   clearTimeout(bankTimer);
   bankTimer = setTimeout(() => {
-    for (const b of App.banks) if (b._dirty) { b._dirty = false; const { _dirty, ...data } = b; writeDoc('qbank/' + b.id, data).catch(() => {}); }
+    for (const b of App.banks) if (b._dirty) {
+      b._dirty = false;
+      const { _dirty, ...data } = b; const local = clone(data); const base = App.base.banks[b.id] || {};
+      const baseQ = Object.fromEntries((base.qs || []).map(q => [q.id, q]));
+      mergeWrite('qbank/' + b.id, cur => {
+        if (!cur) return local;
+        if (local.title !== base.title) cur.title = local.title;
+        for (const q of local.qs || []) {
+          if (same(q, baseQ[q.id])) continue;
+          const rq = (cur.qs || []).find(x => x.id === q.id);
+          if (rq) { for (const f of ['seen', 'ok', 'bad']) if (q[f] !== undefined) rq[f] = q[f]; } else (cur.qs = cur.qs || []).push(q);
+        }
+        return cur;
+      }).then(m => { if (m) App.base.banks[b.id] = clone(m); }).catch(() => { b._dirty = true; });
+    }
   }, 1200);
 }
 function reportBad(q) {
@@ -267,6 +374,45 @@ function readMap() {
 }
 function fixFuri(t) {
   return String(t || '').replace(FURI_RE, (all, k, r) => { const set = readMap().get(k); if (set && set.size === 1) { const only = [...set][0]; if (only !== r && /^[\u3040-\u309f]+$/.test(only)) return `{${k}|${only}}`; } return all; });
+}
+// 후리가나가 없는 예전 문제에도 단어장 읽기로 자동 표시 (읽기가 한 가지뿐인 한자 묶음만)
+let _kanjiRead = null;
+function kanjiReadMap() {
+  if (_kanjiRead) return _kanjiRead;
+  const m = new Map();
+  const add = (k, r) => { if (!k || !r || !/^[぀-ゟ]+$/.test(r)) return; if (!m.has(k)) m.set(k, new Set()); m.get(k).add(r); };
+  for (const v of allVocab()) {
+    const w = String(v.w || '').split(/[;；]/)[0].trim().replace(/^[～〜]/, ''), r = String(v.r || '').split(/[;；]/)[0].trim().replace(/^[～〜]/, '');
+    const mm = w.match(/^([一-龯々]+)([぀-ゟ]*)$/);
+    if (!mm) continue;
+    const [, kan, oku] = mm;
+    if (oku && r.endsWith(oku)) add(kan, r.slice(0, r.length - oku.length));
+    else if (!oku) add(kan, r);
+  }
+  return (_kanjiRead = m);
+}
+function autoFuri(t) {
+  t = String(t ?? '');
+  if (!/[一-龯]/.test(t)) return t;
+  const map = kanjiReadMap();
+  // 이미 후리가나가 있는 부분과 [u]밑줄[/u] 부분은 그대로 두기
+  return t.split(/(\{[^{}|]+\|[^{}|]+\}|\[u\][\s\S]*?\[\/u\])/).map((seg, i) => {
+    if (i % 2) return seg;
+    let out = '', j = 0;
+    while (j < seg.length) {
+      if (!/[一-龯々]/.test(seg[j])) { out += seg[j++]; continue; }
+      let end = j; while (end < seg.length && /[一-龯々]/.test(seg[end])) end++;
+      const blockLen = end - j;
+      let hit = false;
+      for (let n = Math.min(blockLen, 6); n >= 1; n--) {
+        if (n === 1 && blockLen > 1) break; // 한 글자 읽기는 그 한자가 혼자 쓰일 때만 (日本人의 人 같은 오독 방지)
+        const k = seg.slice(j, j + n), set = map.get(k);
+        if (set && set.size === 1) { out += `{${k}|${[...set][0]}}`; j += n; hit = true; break; }
+      }
+      if (!hit) { out += seg.slice(j, end); j = end; } // 모르는 한자 묶음은 통째로 그대로
+    }
+    return out;
+  }).join('');
 }
 const plainJa = t => String(t || '').replace(FURI_RE, '$1').replace(/\[\/?u\]/g, '');
 function unwrapArray(v) {
@@ -341,6 +487,7 @@ ${qSpec(level)}`;
   const bank = { id: uid('b'), created: App.today, source: source || 'manual', title: title || '', level, qs };
   App.banks.push(bank);
   await writeDoc('qbank/' + bank.id, bank);
+  App.base.banks[bank.id] = clone(bank);
   return bank;
 }
 
@@ -438,16 +585,27 @@ async function loadAll() {
       db.collection('memos').orderBy('at', 'desc').limit(200).get(), db.collection('qbank').get(),
       db.collection('log').get(),
     ]);
-    App.state = st.exists ? { ...st.data() } : {};
-    App.wrong = wr.exists ? [...(wr.data().list || [])] : [];
-    App.drill = dr.exists ? [...(dr.data().list || [])] : [];
+    App.state = st.exists ? clone(st.data()) : {};
+    App.wrong = wr.exists ? clone(wr.data().list || []) : [];
+    App.drill = dr.exists ? clone(dr.data().list || []) : [];
+    App.base.state = clone(App.state); App.base.wrongLen = App.wrong.length;
+    App.base.drill = Object.fromEntries(App.drill.map(d => [d.id, clone(d)]));
     if (cu.exists) { const d = cu.data(); App.custom = { vocab: [...(d.vocab || [])], grammar: [...(d.grammar || [])] }; registerCustom(); }
-    for (const d of progSnap.docs) App.prog[d.id] = JSON.parse(JSON.stringify(d.data().items || {}));
+    for (const d of progSnap.docs) { App.prog[d.id] = clone(d.data().items || {}); App.base.prog[d.id] = clone(d.data().items || {}); }
     App.lessons = lessons.docs.map(d => ({ id: d.id, ...JSON.parse(JSON.stringify(d.data())) }));
     App.memos = memos.docs.map(d => ({ id: d.id, ...JSON.parse(JSON.stringify(d.data())) }));
-    App.banks = banks.docs.map(d => ({ id: d.id, ...JSON.parse(JSON.stringify(d.data())) }));
-    for (const d of logs.docs) App.logs[d.id] = JSON.parse(JSON.stringify(d.data().days || {}));
-  } finally { clearTimeout(timeout); $('#netNote')?.classList.remove('show'); }
+    App.banks = banks.docs.map(d => ({ id: d.id, ...clone(d.data()) }));
+    App.base.banks = Object.fromEntries(banks.docs.map(d => [d.id, clone(d.data())]));
+    for (const d of logs.docs) { App.logs[d.id] = clone(d.data().days || {}); App.base.logs[d.id] = clone(d.data().days || {}); }
+    App.loadedAt = Date.now(); App.loadFailed = false;
+  } catch (e) { App.loadFailed = true; throw e; } finally { clearTimeout(timeout); $('#netNote')?.classList.remove('show'); }
 }
-function saveCustom() { return writeDoc('custom/items', { vocab: App.custom.vocab, grammar: App.custom.grammar }); }
+function saveCustom() {
+  const local = clone({ vocab: App.custom.vocab, grammar: App.custom.grammar });
+  return mergeWrite('custom/items', cur => {
+    const out = { vocab: cur?.vocab || [], grammar: cur?.grammar || [] };
+    for (const k of ['vocab', 'grammar']) for (const it of local[k]) { const i = out[k].findIndex(x => x.id === it.id); if (i >= 0) out[k][i] = it; else out[k].push(it); }
+    return out;
+  }).then(m => { if (m) { App.custom = { vocab: m.vocab, grammar: m.grammar }; registerCustom(); } return m; });
+}
 function saveState() { markDirty('state'); }

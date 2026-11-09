@@ -5,7 +5,7 @@
 const KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 const MODEL_DEFAULT = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.8-flash";
 const MODEL_QUICK = Deno.env.get("GEMINI_MODEL_QUICK") ?? "gemini-3.5-flash-lite";
-const FALLBACKS = ["gemini-3.6-flash", "gemini-2.5-flash"];
+const FALLBACKS = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite"];
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -38,17 +38,27 @@ Deno.serve(async (req) => {
   const first = tier === "quick" ? MODEL_QUICK : MODEL_DEFAULT;
   const models = [first, ...FALLBACKS.filter((m) => m !== first)];
 
-  let lastErr = "no model available";
+  let lastErr = "no model available", lastCode = "upstream";
   for (const model of models) {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": KEY },
-      body,
-    });
-    const j = await r.json().catch(() => ({}));
-    if (r.status === 404 || (r.status === 400 && /model/i.test(j?.error?.message ?? ""))) { lastErr = j?.error?.message ?? "model not found"; continue; }
-    if (r.status === 429) return reply({ error: j?.error?.message ?? "rate limited", code: "rate_limited" }, 429);
-    if (!r.ok) return reply({ error: j?.error?.message ?? `HTTP ${r.status}`, code: "upstream" }, 502);
+    // 붐빌 때(503)는 같은 모델로 한 번 더, 그래도 안 되면 다음 모델로 넘어가요
+    let r: Response | null = null, j: any = {};
+    for (let attempt = 0; attempt < 2; attempt++) {
+      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": KEY },
+        body,
+      });
+      j = await r.json().catch(() => ({}));
+      if (![500, 503].includes(r.status) || attempt === 1) break;
+      await new Promise((res) => setTimeout(res, 1500));
+    }
+    if (!r) continue;
+    const msg: string = j?.error?.message ?? `HTTP ${r.status}`;
+    if (r.status === 404 || (r.status === 400 && /model/i.test(msg))) { lastErr = msg; continue; }
+    if ([429, 500, 502, 503, 504].includes(r.status) || /overload|high demand|unavailable|quota/i.test(msg)) {
+      lastErr = msg; lastCode = r.status === 429 && !/high demand/i.test(msg) ? "rate_limited" : "overloaded"; continue;
+    }
+    if (!r.ok) return reply({ error: msg, code: "upstream" }, 502);
     const cand = j?.candidates?.[0];
     const text = (cand?.content?.parts ?? []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text ?? "").join("");
     const finish = cand?.finishReason ?? "";
@@ -56,5 +66,5 @@ Deno.serve(async (req) => {
     if (finish === "MAX_TOKENS") return reply({ error: "output too long", code: "truncated", text, model }, 200);
     return reply({ text, model, finish });
   }
-  return reply({ error: lastErr, code: "upstream" }, 502);
+  return reply({ error: lastErr, code: lastCode }, lastCode === "rate_limited" ? 429 : 503);
 });

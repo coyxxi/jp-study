@@ -9,7 +9,7 @@ const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 const CRON_SECRET = Deno.env.get("CRON_SECRET") ?? "";
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.8-flash";
-const FALLBACKS = ["gemini-3.6-flash", "gemini-2.5-flash"];
+const FALLBACKS = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite"];
 const UNSEEN_LIMIT = 40; // 안 푼 문제가 이만큼 쌓여 있으면 그날은 건너뜀
 
 // deno-lint-ignore no-explicit-any
@@ -41,10 +41,18 @@ async function gemini(prompt: string): Promise<string> {
   const body = JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.8, maxOutputTokens: 32768, responseMimeType: "application/json" } });
   let last = "no model";
   for (const model of [MODEL, ...FALLBACKS.filter((m) => m !== MODEL)]) {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": KEY }, body });
-    const j: Any = await r.json().catch(() => ({}));
-    if (r.status === 404 || (r.status === 400 && /model/i.test(j?.error?.message ?? ""))) { last = j?.error?.message ?? "model not found"; continue; }
-    if (!r.ok) throw new Error(j?.error?.message ?? `HTTP ${r.status}`);
+    let r: Response | null = null, j: Any = {};
+    for (let attempt = 0; attempt < 2; attempt++) {
+      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": KEY }, body });
+      j = await r.json().catch(() => ({}));
+      if (![500, 503].includes(r.status) || attempt === 1) break;
+      await new Promise((res) => setTimeout(res, 2000));
+    }
+    if (!r) continue;
+    const msg: string = j?.error?.message ?? `HTTP ${r.status}`;
+    if (r.status === 404 || (r.status === 400 && /model/i.test(msg))) { last = msg; continue; }
+    if ([429, 500, 502, 503, 504].includes(r.status) || /overload|high demand|unavailable|quota/i.test(msg)) { last = msg; continue; }
+    if (!r.ok) throw new Error(msg);
     return (j?.candidates?.[0]?.content?.parts ?? []).filter((p: Any) => !p.thought).map((p: Any) => p.text ?? "").join("");
   }
   throw new Error(last);

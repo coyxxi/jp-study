@@ -190,6 +190,7 @@ function aiErrorText(e) {
   const c = e?.code;
   if (c === 'not_granted') return 'AI 연결이 설정되지 않았거나 로그인이 만료됐어요.';
   if (c === 'no_key') return 'Supabase에 GEMINI_API_KEY가 설정되지 않았어요. 설치 안내서 4단계를 확인해 주세요.';
+  if (c === 'overloaded') return '지금 AI 서버에 사용자가 몰려서 모든 모델이 바빠요. 1~2분 뒤 다시 눌러 주세요.';
   if (c === 'upstream') return 'AI 서버가 응답하지 않았어요. 잠시 후 다시 시도해 주세요. (' + (e?.message || '').slice(0, 80) + ')';
   if (c === 'rate_limited') return '요청이 많아 잠시 쉬어야 해요. 조금 뒤에 다시 시도해 주세요.';
   if (c === 'invalid_json') return 'AI 응답을 읽지 못했어요. 다시 시도해 주세요. (설정 → AI 연결 테스트에서 원문을 볼 수 있어요)';

@@ -81,13 +81,18 @@ function makeSample(sb) {
       images = [];
       for (const f of list) { const b = await shrinkImage(f, 1600, 0.82); images.push({ mime: 'image/jpeg', data: await blobToB64(b) }); }
     }
-    const req = sb.functions.invoke('ai', { body: { input, json, tier: opts.modelTier || 'default', images } });
     const aborted = new Promise((_, rej) => opts.signal?.addEventListener('abort', () => rej({ code: 'cancelled' })));
-    const { data, error } = await Promise.race([req, aborted]);
+    let data, error;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      ({ data, error } = await Promise.race([sb.functions.invoke('ai', { body: { input, json, tier: opts.modelTier || 'default', images } }), aborted]));
+      const st = error?.context?.status;
+      if (!(st === 503 || st === 502) || attempt === 1) break;
+      await new Promise(r => setTimeout(r, 2500)); // 서버가 붐비면 한 번 더 시도
+    }
     if (error) {
       let body = null; try { body = await error.context?.json(); } catch { }
       const st = error.context?.status;
-      throw { code: body?.code || (st === 401 ? 'not_granted' : st === 429 ? 'rate_limited' : 'upstream'), message: body?.error || error.message };
+      throw { code: body?.code || (st === 401 ? 'not_granted' : st === 429 ? 'rate_limited' : st === 503 ? 'overloaded' : 'upstream'), message: body?.error || error.message };
     }
     if (data?.error) throw { code: data.code || 'upstream', message: data.error, text: data.text };
     const text = data?.text || '';

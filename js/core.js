@@ -214,12 +214,16 @@ function recordAnswer(ids, ok, area, qref) {
     if (ok) {
       p.r = (p.r || 0) + 1;
       if (p.d !== t) { p.c = (p.c || 0) + 1; p.d = t; }
-      p.s = p.c >= 3 ? 'm' : 'l';
-      p.nx = addDays(t, INTERVALS[Math.min(p.c, INTERVALS.length - 1)]);
+      const hist = ((p.h || '') + 'o').slice(-6);
+      // 익힘: 서로 다른 날 3번 연속 정답, 또는 최근 4번 연속 정답
+      const mastered = p.c >= 3 || /oooo$/.test(hist);
+      p.s = mastered ? 'm' : 'l';
+      p.nx = addDays(t, INTERVALS[Math.min(mastered ? Math.max(p.c, 3) : p.c, INTERVALS.length - 1)]);
     } else {
       p.w = (p.w || 0) + 1; p.c = 0; p.s = 'l'; p.nx = addDays(t, 1); p.lw = t;
     }
     p.h = ((p.h || '') + (ok ? 'o' : 'x')).slice(-6);
+    p.qa = Date.now(); // 마지막으로 문제에 나온 때 (골고루 내기용)
     markDirty('prog:' + chunkOf(id));
   }
   const mon = t.slice(0, 7);
@@ -269,6 +273,24 @@ function dueItems(limit = 12) {
   out.sort((a, b) => (P(a).nx || '').localeCompare(P(b).nx || ''));
   return out.slice(0, limit);
 }
+/* 골고루 뽑기: 오래 안 나온 것 우선, 복습할 때 된 것·학습 중은 조금 더 자주, 방금 나온 건 뒤로 */
+function balancedPick(ids, n) {
+  const now = Date.now(), H = 3600e3, t = App.today;
+  const scored = [...new Set(ids)].map(id => {
+    const p = P(id) || {};
+    const hrs = p.qa ? Math.min((now - p.qa) / H, 24 * 30) : 24 * 30;
+    let w = hrs + 1;
+    if (p.nx && p.nx <= t) w *= 2;
+    if (p.s === 'l') w *= 1.5; else if (p.s === 'm') w *= 0.5;
+    if (p.qa && now - p.qa < 2 * H) w *= 0.05; // 2시간 안에 나온 건 거의 안 나오게
+    return [id, w * (0.6 + Math.random() * 0.8)];
+  });
+  scored.sort((a, b) => b[1] - a[1]);
+  return scored.slice(0, n == null ? scored.length : n).map(x => x[0]);
+}
+/* 뜻이 겹치는지 (보기에 정답이 두 개 생기지 않게) */
+const meanTok = m => String(m || '').replace(/[（(].*?[)）]/g, '').split(/[,，、·/;；]+/).map(x => x.trim()).filter(Boolean);
+const meanOverlap = (a, b) => { const A = new Set(meanTok(a)); return meanTok(b).some(x => A.has(x)); };
 function weakItems(n = 5) {
   const from = addDays(App.today, -14), cnt = {};
   for (const m of Object.values(App.logs)) for (const [d, arr] of Object.entries(m)) {
@@ -335,7 +357,7 @@ function scheduleBankSave() {
         for (const q of local.qs || []) {
           if (same(q, baseQ[q.id])) continue;
           const rq = (cur.qs || []).find(x => x.id === q.id);
-          if (rq) { for (const f of ['seen', 'ok', 'bad']) if (q[f] !== undefined) rq[f] = q[f]; } else (cur.qs = cur.qs || []).push(q);
+          if (rq) { for (const f of ['seen', 'ok', 'bad', 'ko', 'cko']) if (q[f] !== undefined) rq[f] = q[f]; } else (cur.qs = cur.qs || []).push(q);
         }
         return cur;
       }).then(m => { if (m) App.base.banks[b.id] = clone(m); }).catch(() => { b._dirty = true; });
@@ -356,7 +378,7 @@ const READ_LEN = {
   1: '짧은 글(短文): 약 200자 / 중간 글(中文): 약 500자 / 긴 글(長文): 약 1000자',
 };
 const qSpec = (level = 5) => `각 문제는 이 JSON 형태를 따르세요:
-{"area":"v|g|r|l","sub":"유형 이름(일본어, 예: 文脈規定)","items":["관련 항목 id"],"prompt":"문제 문장(일본어). 밑줄 대상은 [u]단어[/u], 빈칸은 （　　）, 文の組み立て는 ＿＿ ＿＿ ★ ＿＿ 형태","passage":"독해 지문(일본어, 독해만)","script":[{"s":"男|女|N","t":"대사(일본어, 청해만)"}],"choices":["보기1","보기2","보기3","보기4"],"ans":0,"expl":"한국어 해설 1~2문장"}
+{"area":"v|g|r|l","sub":"유형 이름(일본어, 예: 文脈規定)","items":["관련 항목 id"],"prompt":"문제 문장(일본어). 밑줄 대상은 [u]단어[/u], 빈칸은 （　　）, 文の組み立て는 ＿＿ ＿＿ ★ ＿＿ 형태","passage":"독해 지문(일본어, 독해만)","script":[{"s":"男|女|N","t":"대사(일본어, 청해만)"}],"choices":["보기1","보기2","보기3","보기4"],"ans":0,"expl":"한국어 해설 1~2문장","ko":"정답을 넣은 문제 문장(독해·청해는 질문)의 자연스러운 한국어 뜻","cko":["보기1의 한국어 뜻","보기2","보기3","보기4"]}
 규칙: choices는 정확히 4개, ans는 0~3 정답 위치(위치를 고르게 섞기), 오답 보기는 그럴듯하지만 명확히 틀려야 함, 정답은 오직 하나. 청해는 prompt에 질문을 쓰고 script에 대화를 쓰며, 보기는 짧게. 문맥이 자연스러운 실제 생활 장면 문장을 쓰고, 같은 문형을 반복하지 마세요.
 독해 지문 길이(JLPT N${level} 기준): ${READ_LEN[level] || READ_LEN[5]}. 유형 이름에 短文/中文을 맞춰 쓰세요.
 후리가나: prompt, passage, choices, script의 대사에 나오는 모든 한자 단어에 {漢字|よみ} 형식으로 히라가나 읽기를 붙이세요. 예: {毎朝|まいあさ}{起|お}きます. 단, 漢字読み 유형에서 [u]밑줄[/u] 대상 단어와 表記 유형의 보기처럼 읽기 자체가 정답인 곳에는 붙이지 마세요.
@@ -444,7 +466,7 @@ function validateQs(arr, allowIds) {
     if (q.area === 'l' && (!Array.isArray(q.script) || !q.script.length)) continue;
     if (q.area === 'r' && !q.passage) q.area = 'g';
     q.items = (Array.isArray(q.items) ? q.items : []).filter(id => App.byId[id] && (!allowIds || allowIds.has(id))).slice(0, 4);
-    ok.push({ id: uid('q'), area: q.area, sub: String(q.sub || '').slice(0, 20), items: q.items, prompt: fixFuri(String(q.prompt || '').slice(0, 600)), passage: q.passage ? fixFuri(String(q.passage).slice(0, 2400)) : undefined, script: q.area === 'l' ? q.script.slice(0, 14).map(l => ({ s: String(l.s || 'N').slice(0, 2), t: fixFuri(String(l.t || '').slice(0, 300)) })) : undefined, choices: q.choices.map(c => fixFuri(String(c).slice(0, 160))), ans, expl: String(q.expl || '').slice(0, 300) });
+    ok.push({ id: uid('q'), area: q.area, sub: String(q.sub || '').slice(0, 20), items: q.items, prompt: fixFuri(String(q.prompt || '').slice(0, 600)), passage: q.passage ? fixFuri(String(q.passage).slice(0, 2400)) : undefined, script: q.area === 'l' ? q.script.slice(0, 14).map(l => ({ s: String(l.s || 'N').slice(0, 2), t: fixFuri(String(l.t || '').slice(0, 300)) })) : undefined, choices: q.choices.map(c => fixFuri(String(c).slice(0, 160))), ans, expl: String(q.expl || '').slice(0, 300), ko: q.ko ? String(q.ko).slice(0, 300) : undefined, cko: Array.isArray(q.cko) && q.cko.length === 4 ? q.cko.map(x => String(x || '').slice(0, 80)) : undefined });
   }
   return ok;
 }
@@ -503,8 +525,12 @@ function vocabQuestion(id, mode) {
   }
   const hasKanji = /[一-龯]/.test(it.w);
   const modes = hasKanji ? ['read', 'mean', 'write', 'ko'] : ['mean', 'ko'];
-  mode = mode && modes.includes(mode) ? mode : modes[Math.random() * modes.length | 0];
-  const same = allVocab().filter(v => v.id !== id && v.w !== it.w && Math.abs((v.l || 5) - (it.l || 5)) <= 1);
+  if (!(mode && modes.includes(mode))) {
+    // 지난번과 다른 유형으로
+    const last = (P(id) || {}).qm, rest = modes.filter(m => m !== last);
+    mode = rest[Math.random() * rest.length | 0];
+  }
+  const same = allVocab().filter(v => v.id !== id && v.w !== it.w && v.r !== it.r && Math.abs((v.l || 5) - (it.l || 5)) <= 1 && !meanOverlap(v.m, it.m));
   const note = it.n ? '\n' + it.n : '';
   if (mode === 'read') {
     const pool = same.filter(v => v.r !== it.r && Math.abs(v.r.length - it.r.length) <= 1).map(v => v.r);
@@ -533,6 +559,12 @@ function finishRule(q) {
   const choices = shuffle([q._ans, ...opts]);
   const out = { id: q.id, area: q.area, sub: q.sub, items: q.items, prompt: q.prompt, choices, ans: choices.indexOf(q._ans), expl: q.expl, rule: 1 };
   return out;
+}
+/* 문제에 나온 유형 기록 (다음엔 다른 유형으로) */
+function noteMode(q) {
+  if (!q?.rule || !q.items?.[0]) return;
+  const m = { R: 'read', W: 'write', K: 'ko', M: 'mean' }[String(q.id).slice(-1)];
+  const p = P(q.items[0]); if (m && p) p.qm = m;
 }
 function ruleQ(id, mode) {
   const q = vocabQuestion(id, mode);

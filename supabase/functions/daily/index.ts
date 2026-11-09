@@ -24,7 +24,7 @@ const READ_LEN: Record<number, string> = {
   1: "짧은 글(短文): 약 200자 / 중간 글(中文): 약 500자 / 긴 글(長文): 약 1000자",
 };
 const qSpec = (level: number) => `각 문제는 이 JSON 형태를 따르세요:
-{"area":"v|g|r|l","sub":"유형 이름(일본어, 예: 文脈規定)","items":["관련 항목 id"],"prompt":"문제 문장(일본어). 밑줄 대상은 [u]단어[/u], 빈칸은 （　　）, 文の組み立て는 ＿＿ ＿＿ ★ ＿＿ 형태","passage":"독해 지문(일본어, 독해만)","script":[{"s":"男|女|N","t":"대사(일본어, 청해만)"}],"choices":["보기1","보기2","보기3","보기4"],"ans":0,"expl":"한국어 해설 1~2문장"}
+{"area":"v|g|r|l","sub":"유형 이름(일본어, 예: 文脈規定)","items":["관련 항목 id"],"prompt":"문제 문장(일본어). 밑줄 대상은 [u]단어[/u], 빈칸은 （　　）, 文の組み立て는 ＿＿ ＿＿ ★ ＿＿ 형태","passage":"독해 지문(일본어, 독해만)","script":[{"s":"男|女|N","t":"대사(일본어, 청해만)"}],"choices":["보기1","보기2","보기3","보기4"],"ans":0,"expl":"한국어 해설 1~2문장","ko":"정답을 넣은 문제 문장(독해·청해는 질문)의 자연스러운 한국어 뜻","cko":["보기1의 한국어 뜻","보기2","보기3","보기4"]}
 규칙: choices는 정확히 4개, ans는 0~3 정답 위치(위치를 고르게 섞기), 오답 보기는 그럴듯하지만 명확히 틀려야 함, 정답은 오직 하나. 청해는 prompt에 질문을 쓰고 script에 대화를 쓰며, 보기는 짧게. 문맥이 자연스러운 실제 생활 장면 문장을 쓰고, 같은 문형을 반복하지 마세요.
 독해 지문 길이(JLPT N${level} 기준): ${READ_LEN[level] ?? READ_LEN[5]}. 유형 이름에 短文/中文을 맞춰 쓰세요.
 후리가나: prompt, passage, choices, script의 대사에 나오는 모든 한자 단어에 {漢字|よみ} 형식으로 히라가나 읽기를 붙이세요. 예: {毎朝|まいあさ}{起|お}きます. 단, 漢字読み 유형에서 [u]밑줄[/u] 대상 단어와 表記 유형의 보기처럼 읽기 자체가 정답인 곳에는 붙이지 마세요.
@@ -94,7 +94,7 @@ function validate(arr: Any, known: Set<string>, fix: (s: string) => string) {
       prompt: fix(String(raw.prompt || "").slice(0, 600)),
       passage: raw.passage ? fix(String(raw.passage).slice(0, 2400)) : undefined,
       script: script ? script.slice(0, 14).map((l: Any) => ({ s: String(l.s || "N").slice(0, 2), t: fix(String(l.t || "").slice(0, 300)) })) : undefined,
-      choices: choices.map((c: Any) => fix(String(c).slice(0, 160))), ans, expl: String(raw.expl || "").slice(0, 300),
+      choices: choices.map((c: Any) => fix(String(c).slice(0, 160))), ans, expl: String(raw.expl || "").slice(0, 300), ko: raw.ko ? String(raw.ko).slice(0, 300) : undefined, cko: Array.isArray(raw.cko) && raw.cko.length === 4 ? raw.cko.map((x: Any) => String(x ?? "").slice(0, 80)) : undefined,
     });
   }
   return out;

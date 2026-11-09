@@ -34,6 +34,44 @@ function scriptBox(q) {
   return h('div', { class: 'script' }, h('b', {}, '스크립트'), ...(q.script || []).map(l => h('div', { lang: 'ja', html: esc(l.s && l.s !== 'N' ? l.s + '：' : '') + fmtPrompt(q.rule ? l.t : autoFuri(l.t)) })));
 }
 
+/* 뜻 풀이: 문장 뜻 · 보기 뜻 · 관련 단어/문법 뜻 */
+function itemMeanRow(id) {
+  const it = App.byId[id]; if (!it) return null;
+  if (it.t === 'g') return h('div', {}, h('b', { lang: 'ja' }, it.p), ' ', it.m, it.f ? h('div', { class: 'muted sm' }, it.f) : null);
+  if (it.t === 'k') return h('div', {}, h('b', { lang: 'ja' }, it.c), ' ', it.m);
+  return h('div', {}, h('b', { lang: 'ja' }, it.w), it.r && it.r !== it.w ? h('span', { lang: 'ja' }, '（' + it.r + '）') : null, ' ', it.m);
+}
+function meaningBox(q, open) {
+  const box = h('details', { class: 'mean', open: open || null });
+  const body = h('div', { class: 'mean-b' });
+  box.append(h('summary', {}, '뜻 보기'), body);
+  const fill = () => {
+    body.innerHTML = '';
+    if (q.ko) body.append(h('div', { class: 'mean-s' }, h('span', { class: 'tag' }, '문장'), ' ', q.ko));
+    if (q.cko) body.append(h('ol', { class: 'mean-c' }, q.choices.map((c, j) => h('li', { class: j === q.ans ? 'ok' : '' }, h('span', { lang: 'ja' }, plainJa(c)), ' — ', q.cko[j] || ''))));
+    const items = q.rule ? [] : (q.items || []).map(itemMeanRow).filter(Boolean);
+    if (items.length) body.append(h('div', { class: 'mean-i' }, items));
+    const canAI = q.bank && !q.cko && App.sample && q.area !== 'l';
+    if (canAI) {
+      const b = h('button', { class: 'btn ghost sm', onclick: async () => {
+        b.disabled = true; b.textContent = '뜻 찾는 중…';
+        try {
+          const r = await App.sample.json(`다음 일본어 시험 문제의 한국어 뜻을 JSON으로만 답하세요.\n형식: {"ko":"정답을 넣은 문제 문장의 자연스러운 한국어 뜻","cko":["보기1의 한국어 뜻","보기2","보기3","보기4"]}\n문제: ${plainJa(q.prompt)}\n보기: ${q.choices.map((c, j) => (j + 1) + ') ' + plainJa(c)).join(' / ')}\n정답: ${q.ans + 1}번`, { modelTier: 'quick' });
+          if (r && Array.isArray(r.cko) && r.cko.length === 4) {
+            q.ko = String(r.ko || '').slice(0, 300); q.cko = r.cko.map(x => String(x || '').slice(0, 80));
+            const bk = App.banks.find(x => x.id === q.bank), bq = bk?.qs.find(x => x.id === q.id);
+            if (bq) { bq.ko = q.ko; bq.cko = q.cko; bk._dirty = true; scheduleBankSave(); } // 다음부터는 바로 보여요
+            fill();
+          } else throw 0;
+        } catch { b.disabled = false; b.textContent = '다시 시도'; }
+      } }, q.ko ? '보기 뜻도 보기 (AI)' : '문장·보기 뜻 보기 (AI)');
+      body.append(b);
+    }
+    if (!body.childNodes.length) box.hidden = true;
+  };
+  fill();
+  return box;
+}
 function runQuiz(root, qs, opts = {}) {
   const mode = opts.mode || 'practice';
   qs = qs.filter(Boolean);
@@ -101,10 +139,10 @@ function runQuiz(root, qs, opts = {}) {
       if (mode === 'exam') { res[i] = { pick: k }; $$('.opt', list).forEach((b, j) => b.classList.toggle('sel', j === k)); return; }
       if (res[i]) return;
       const ok = k === q.ans; res[i] = { pick: k, ok };
-      recordAnswer(q.items, ok, q.area, ok ? null : qRef(q)); markSeen(q, ok);
+      recordAnswer(q.items, ok, q.area, ok ? null : qRef(q)); markSeen(q, ok); noteMode(q);
       $$('.opt', list).forEach((b, j) => { b.disabled = true; if (j === q.ans) b.classList.add('right'); else if (j === k) b.classList.add('wrong'); });
       foot.innerHTML = '';
-      const fb = h('div', { class: 'fb ' + (ok ? 'ok' : 'no') }, h('b', {}, ok ? '정답이에요.' : '아쉬워요. 정답은 ' + (q.ans + 1) + '번.'), h('div', { lang: 'ja' }, q.expl || ''));
+      const fb = h('div', { class: 'fb ' + (ok ? 'ok' : 'no') }, h('b', {}, ok ? '정답이에요.' : '아쉬워요. 정답은 ' + (q.ans + 1) + '번.'), h('div', { lang: 'ja' }, q.expl || ''), meaningBox(q, !ok));
       foot.append(fb);
       if (q.area === 'l' && q.script) foot.append(scriptBox(q));
       foot.append(h('div', { class: 'row' },
@@ -116,7 +154,7 @@ function runQuiz(root, qs, opts = {}) {
   function next() { if (i < qs.length - 1) { i++; show(); } else finish(); }
   function finish() {
     TTS.stop(); clearInterval(timerId);
-    if (mode === 'exam') qs.forEach((q, k) => { const r = res[k] || { pick: -1 }; r.ok = r.pick === q.ans; res[k] = r; recordAnswer(q.items, r.ok, q.area, r.ok ? null : qRef(q)); markSeen(q, r.ok); });
+    if (mode === 'exam') qs.forEach((q, k) => { const r = res[k] || { pick: -1 }; r.ok = r.pick === q.ans; res[k] = r; recordAnswer(q.items, r.ok, q.area, r.ok ? null : qRef(q)); markSeen(q, r.ok); noteMode(q); });
     const by = {};
     qs.forEach((q, k) => { const a = by[q.area] = by[q.area] || [0, 0]; a[1]++; if (res[k]?.ok) a[0]++; });
     const right = res.filter(r => r?.ok).length;
@@ -132,6 +170,7 @@ function runQuiz(root, qs, opts = {}) {
         h('div', { class: 'qprompt sm', lang: 'ja', html: fmtPrompt(q.prompt) }),
         h('div', { class: 'wa', lang: 'ja' }, h('span', { class: 'no' }, '내 답: ' + (r && r.pick >= 0 ? plainJa(q.choices[r.pick]) : '무응답')), h('span', { class: 'ok' }, '정답: ' + plainJa(q.choices[q.ans]))),
         q.expl ? h('div', { class: 'muted', lang: 'ja' }, q.expl) : null,
+        meaningBox(q, true),
         q.script ? scriptBox(q) : null));
     }
     if (lk && lk.looked.length) {

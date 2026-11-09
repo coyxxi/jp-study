@@ -54,8 +54,8 @@ async function getDay() {
 function buildDay() {
   let review = dueItems(12);
   if (review.length < 8) {
-    const extra = shuffle(allVocab().filter(v => ['a', 'l'].includes(status(v.id)) && !review.includes(v.id) && (v.l || 5) >= 4)).slice(0, 10 - review.length);
-    review = review.concat(extra.map(v => v.id));
+    const extra = balancedPick(allVocab().filter(v => ['a', 'l'].includes(status(v.id)) && !review.includes(v.id) && (v.l || 5) >= 4).map(v => v.id), 10 - review.length);
+    review = review.concat(extra);
   }
   if (review.length < 6) review = review.concat(shuffle(allVocab().filter(v => v.l === targetLevel() && status(v.id) === 'n')).slice(0, 8 - review.length).map(v => v.id));
   const last = App.lessons[0];
@@ -532,7 +532,7 @@ function renderTest(v, sub) {
     }
     function runArea(a) {
       let qs;
-      if (a === 'v') { const ids = shuffle(allVocab().filter(v => v.l >= targetLevel() - 0 && v.l <= 5 && ['a', 'l', 'm'].includes(status(v.id)))).slice(0, 14).map(v => v.id).concat(shuffle(App.M.kanji.filter(k => k.l === targetLevel())).slice(0, 2).map(k => k.id)); qs = ids.map(id => ruleQ(id)).concat(shuffle(bankQuestions(q => q.area === 'v')).slice(0, 4)); }
+      if (a === 'v') { const ids = balancedPick(allVocab().filter(v => v.l >= targetLevel() - 0 && v.l <= 5 && ['a', 'l', 'm'].includes(status(v.id))).map(v => v.id), 14).concat(shuffle(App.M.kanji.filter(k => k.l === targetLevel())).slice(0, 2).map(k => k.id)); qs = ids.map(id => ruleQ(id)).concat(shuffle(bankQuestions(q => q.area === 'v')).slice(0, 4)); }
       else qs = shuffle(bankQuestions(q => q.area === a)).sort((x, y) => (x.seen || 0) - (y.seen || 0)).slice(0, 20);
       if (!qs.length) return offerGenerate(a === 'l' ? 'l' : 'mix', () => nav('test', 'area'));
       runQuiz(el, shuffle(qs), { onDone: () => nav('test', 'area') });

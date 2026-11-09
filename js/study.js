@@ -12,10 +12,8 @@ function statusMatch(id, f) {
   if (f === 'learn') return ['a', 'l'].includes(p.s || 'n');
   return (p.s || 'n') === f;
 }
-function priority(ids) {
-  const rank = id => { const p = P(id) || {}; if (p.nx && p.nx <= App.today) return 0; return { l: 1, a: 2, n: 3, m: 4 }[p.s || 'n']; };
-  return shuffle(ids).sort((a, b) => rank(a) - rank(b));
-}
+// 예전엔 '복습·학습 중'을 항상 맨 앞에 둬서 같은 단어만 반복됐어요 → 오래 안 나온 것부터 골고루
+function priority(ids) { return balancedPick(ids); }
 function grammarCore(p) {
   const s = String(p || '').replace(/[（(].*?[)）]/g, '').replace(/[〜～]/g, ' ');
   return s.split(/[\s・／/、]+/).filter(t => t.length >= 2).sort((a, b) => b.length - a.length)[0] || '';

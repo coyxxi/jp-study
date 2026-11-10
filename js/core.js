@@ -37,6 +37,13 @@ const App = {
   today: ymd(), lessons: [], memos: [], banks: [], logs: {}, listeners: [],
 };
 
+/* 날짜 넘어감 확인: 화면을 켜 둔 채 자정을 넘겨도 오늘 날짜로 맞춰요 */
+function ensureToday() {
+  const t = ymd();
+  if (t === App.today) return false;
+  App.today = t; App.dayDoc = null;
+  return true;
+}
 /* ---------- toasts ---------- */
 function toast(msg, kind = '') {
   const t = h('div', { class: 'toast ' + kind }, msg);

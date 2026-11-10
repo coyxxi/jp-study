@@ -15,7 +15,7 @@ const unitText = () => App.state.unit || '진도 미입력';
 const md = s => { if (!s) return ''; const [, m, d] = s.split('-'); return `${+m}월 ${+d}일`; };
 
 function nav(tab, sub) {
-  TTS.stop();
+  TTS.stop(); ensureToday();
   App.tab = tab; App.sub = sub;
   try { localStorage.setItem('jp.tab', tab); } catch { }
   $$('.nav [data-tab], .tabbar [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
@@ -44,6 +44,7 @@ function aiMissing() { return h('div', { class: 'note warn' }, 'AI 기능이 아
 
 /* =================== TODAY =================== */
 async function getDay() {
+  ensureToday();
   const path = 'day/' + App.today;
   if (App.dayDoc?.date === App.today) return App.dayDoc;
   let d = null;
@@ -73,6 +74,16 @@ function buildDay() {
       listen: { refs: listen.map(q => ({ bank: q.bank, id: q.id })), done: false },
     },
   };
+}
+/* 파트 완료 표시: 시작한 날짜의 세트에, 그 파트만 '완료'로 저장 (다른 기기·새로 불러온 세트와 섞여도 안 사라지게) */
+function markSectionDone(date, key, s) {
+  s.done = true;
+  if (App.dayDoc?.date === date && App.dayDoc.sec?.[key]) App.dayDoc.sec[key].done = true;
+  mergeWrite('day/' + date, cur => {
+    if (!cur || !cur.sec) { const d = App.dayDoc?.date === date ? clone(App.dayDoc) : null; if (!d) return null; d.sec[key].done = true; return d; }
+    if (cur.sec[key]) cur.sec[key].done = true; else cur.sec[key] = Object.assign({}, s, { done: true });
+    return cur;
+  }).catch(() => {});
 }
 function saveDay() {
   if (!App.dayDoc) return;
@@ -156,7 +167,7 @@ function overlay(title) {
 }
 async function startSection(key) {
   const day = await getDay(); const s = day.sec[key];
-  const finish = () => { s.done = true; saveDay(); };
+  const finish = () => markSectionDone(day.date, key, s);
   if (key === 'drill') { const o = overlay('순간 작문'); drillRunner(o.body, s.ids.length ? s.ids : null, () => { finish(); o.close(); nav('today'); }, () => { o.close(); nav('today'); }); return; }
   let qs = [];
   if (key === 'review') qs = s.ids.map(id => ruleQ(id));

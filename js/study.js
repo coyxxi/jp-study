@@ -164,7 +164,8 @@ function grammarCard(g, after) {
   }
   return el;
 }
-function grammarQuiz(ids) {
+async function grammarQuiz(ids) {
+  await loadArchive();
   const set = new Set(ids);
   const bank = shuffle(bankQuestions(q => (q.items || []).some(id => set.has(id)))).sort((a, b) => (a.seen || 0) - (b.seen || 0)).slice(0, 12);
   const rule = priority(ids).slice(0, Math.max(3, 12 - bank.length)).map(id => ruleQ(id));

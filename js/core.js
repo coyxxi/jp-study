@@ -164,6 +164,15 @@ async function flushWrong() {
   App.wrong = clone(merged.list).concat(extra);
   App.base.wrongLen = merged.list.length;
 }
+/* 순간 작문 목록이 400개를 넘으면: 두 번 맞힌(외운) 문장 중 오래된 것부터 정리, 못 맞힌 문장은 남겨요 */
+function trimDrill(list, max = 400) {
+  if (list.length <= max) return list;
+  let over = list.length - max;
+  const drop = new Set();
+  for (const d of list) { if (over <= 0) break; if ((d.ok || 0) >= 2) { drop.add(d.id); over--; } }
+  const kept = list.filter(d => !drop.has(d.id));
+  return kept.length > max * 1.5 ? kept.slice(-max * 1.5) : kept; // 그래도 너무 많으면(600개 초과) 오래된 것부터
+}
 async function flushDrill() {
   const base = App.base.drill;
   const snap = clone(App.drill);
@@ -172,7 +181,7 @@ async function flushDrill() {
   const merged = await mergeWrite('state/drill', cur => {
     const list = cur?.list || [];
     for (const d of changed) { const i = list.findIndex(x => x.id === d.id); if (i >= 0) list[i] = d; else list.push(d); }
-    return { list: list.slice(-400) };
+    return { list: trimDrill(list) };
   });
   if (!merged) return;
   const snapById = Object.fromEntries(snap.map(d => [d.id, d]));
@@ -272,6 +281,11 @@ function weeklyAccuracy(weeks = 6) {
   }
   return out;
 }
+function dueCount() {
+  const t = App.today; let n = 0;
+  for (const chunk of Object.values(App.prog)) for (const [id, p] of Object.entries(chunk)) if (p.nx && p.nx <= t && p.s !== 'n' && App.byId[id]) n++;
+  return n;
+}
 function dueItems(limit = 12) {
   const t = App.today, out = [];
   for (const chunk of Object.values(App.prog)) for (const [id, p] of Object.entries(chunk)) {
@@ -338,6 +352,29 @@ function learnedContext(level = 5, max = 60) {
 }
 
 /* ---------- question bank ---------- */
+/* 문제 은행 보관: 다 풀었고 30일 지난 묶음은 qarch/로 옮겨 평소엔 안 불러와요 (단원 테스트·오답·문법 문제에서는 필요할 때 불러와요) */
+let archP = null;
+function loadArchive() {
+  if (!App.db) return Promise.resolve();
+  if (!archP) archP = App.db.collection('qarch').get().then(snap => {
+    const have = new Set(App.banks.map(b => b.id));
+    for (const d of snap.docs) { const b = clone(d.data()); if (b && !have.has(b.id)) { b._arch = true; App.banks.push(b); App.base.banks[b.id] = clone(d.data()); } }
+  }).catch(() => { archP = null; });
+  return archP;
+}
+async function archiveOldBanks() {
+  if (!App.db) return;
+  const cut = addDays(App.today, -30);
+  const old = App.banks.filter(b => !b._arch && b.created && b.created < cut && (b.qs || []).every(q => q.seen || q.bad)).slice(0, 10);
+  for (const b of old) {
+    try {
+      const { _dirty, _arch, ...data } = b;
+      await writeDoc('qarch/' + b.id, clone(data));
+      await App.db.doc('qbank/' + b.id).delete();
+      b._arch = true;
+    } catch { break; }
+  }
+}
 function bankQuestions(filter = () => true) {
   const out = [];
   for (const b of App.banks) for (const q of b.qs || []) if (!q.bad && filter(q, b)) out.push(Object.assign({ bank: b.id }, q));
@@ -356,9 +393,9 @@ function scheduleBankSave() {
   bankTimer = setTimeout(() => {
     for (const b of App.banks) if (b._dirty) {
       b._dirty = false;
-      const { _dirty, ...data } = b; const local = clone(data); const base = App.base.banks[b.id] || {};
+      const { _dirty, _arch, ...data } = b; const local = clone(data); const base = App.base.banks[b.id] || {};
       const baseQ = Object.fromEntries((base.qs || []).map(q => [q.id, q]));
-      mergeWrite('qbank/' + b.id, cur => {
+      mergeWrite((b._arch ? 'qarch/' : 'qbank/') + b.id, cur => {
         if (!cur) return local;
         if (local.title !== base.title) cur.title = local.title;
         for (const q of local.qs || []) {
@@ -633,8 +670,9 @@ async function loadAll() {
     for (const d of progSnap.docs) { App.prog[d.id] = clone(d.data().items || {}); App.base.prog[d.id] = clone(d.data().items || {}); }
     App.lessons = lessons.docs.map(d => ({ id: d.id, ...JSON.parse(JSON.stringify(d.data())) }));
     App.memos = memos.docs.map(d => ({ id: d.id, ...JSON.parse(JSON.stringify(d.data())) }));
-    App.banks = banks.docs.map(d => ({ id: d.id, ...clone(d.data()) }));
-    App.base.banks = Object.fromEntries(banks.docs.map(d => [d.id, clone(d.data())]));
+    const arch = App.banks.filter(b => b._arch && !banks.docs.some(d => d.id === b.id));
+    App.banks = banks.docs.map(d => ({ id: d.id, ...clone(d.data()) })).concat(arch);
+    App.base.banks = Object.assign(Object.fromEntries(arch.map(b => [b.id, App.base.banks?.[b.id] || clone(b)])), Object.fromEntries(banks.docs.map(d => [d.id, clone(d.data())])));
     for (const d of logs.docs) { App.logs[d.id] = clone(d.data().days || {}); App.base.logs[d.id] = clone(d.data().days || {}); }
     App.loadedAt = Date.now(); App.loadFailed = false;
   } catch (e) { App.loadFailed = true; throw e; } finally { clearTimeout(timeout); $('#netNote')?.classList.remove('show'); }

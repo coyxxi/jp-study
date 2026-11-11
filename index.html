@@ -82,6 +82,7 @@ u.tgt{text-decoration-thickness:2px;text-underline-offset:4px}.star{color:var(--
 .areas>div{display:grid;grid-template-columns:80px 1fr 50px;gap:10px;align-items:center;margin-bottom:8px;font-size:13px}.areas .tr div{background:var(--green)}
 h3.sub{font-size:15px;margin:28px 0 10px}h3.mini{font-size:13px;color:var(--muted);margin:18px 0 8px;display:flex;gap:8px;align-items:center}
 .mean{margin-top:10px;font-size:14px}.mean summary{cursor:pointer;font-weight:700;font-size:13px;color:var(--ink2,inherit)}.mean-b{margin-top:6px;display:grid;gap:6px}.mean-s .tag{font-size:11px;padding:1px 6px;border-radius:6px;background:var(--card);border:1px solid var(--line)}.mean-c{margin:0;padding-left:20px}.mean-c li.ok{font-weight:700}.mean-i{display:grid;gap:4px;padding-top:4px;border-top:1px dashed var(--line)}.mean .btn{justify-self:start}
+.memoday{border:1px solid var(--line);border-radius:12px;margin-bottom:8px;background:var(--card)}.memoday>summary{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;list-style:none}.memoday>summary::-webkit-details-marker{display:none}.memoday>summary::after{content:'▸';color:var(--muted)}.memoday[open]>summary::after{content:'▾'}.memoday>summary b{margin-right:auto}.memoday-b{padding:0 12px 12px}.memo .orig{margin:4px 0 8px}.memo .orig summary{cursor:pointer}
 .wrongcard{border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px;background:var(--card)}.wa{display:flex;gap:16px;flex-wrap:wrap;font-size:13.5px;margin-bottom:6px}.wa .no{color:var(--red)}.wa .ok{color:var(--ok);font-weight:700}
 /* record */
 .cols3{display:grid;grid-template-columns:300px 1fr 330px;gap:20px;align-items:start}
@@ -308,6 +309,7 @@ ruby{ruby-position:over}rt{font-size:.5em;color:var(--muted);font-weight:400;use
   const base = location.origin + location.pathname.replace(/[^/]*$/, '');
   if (App.state.site !== base) { App.state.site = base; saveState(); }
   App.ready = true;
+  setTimeout(() => archiveOldBanks().catch(() => {}), 8000); // 다 푼 오래된 문제 묶음 보관 (첫 화면 속도 유지)
   let start = 'today'; try { start = localStorage.getItem('jp.tab') || 'today'; } catch { }
   nav(TABS.some(t => t[0] === start) ? start : 'today');
   // 다른 기기에서 공부한 내용이 보이도록, 한동안 안 보다가 돌아오면 최신 기록을 다시 불러와요

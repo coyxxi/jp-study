@@ -103,7 +103,7 @@ function makeSample(sb) {
     }
     if (error) throw await errOf(error);
     if (data?.error) throw { code: data.code || 'upstream', message: data.error, text: data.text };
-    return { text: data?.text || '', model: data?.model };
+    return { text: data?.text || '', model: data?.model, primary: data?.primary, skipped: data?.skipped };
   }
 
   // 2) 맡겨 두기 (긴 작업): 작업 번호를 받고, 결과가 저장될 때까지 몇 초마다 확인
@@ -123,7 +123,7 @@ function makeSample(sb) {
       try { snap = await App.db.doc('jobs/' + jobId).get(); } catch { continue; } // 잠깐 끊겨도 계속 확인
       const d = snap.exists ? snap.data() : null;
       opts.onWait && opts.onWait(Date.now() - startedAt, d);
-      if (d && d.status === 'done') { App.db.doc('jobs/' + jobId).delete().catch(() => {}); return { text: d.text || '', model: d.model }; }
+      if (d && d.status === 'done') { App.db.doc('jobs/' + jobId).delete().catch(() => {}); return { text: d.text || '', model: d.model, primary: d.primary, skipped: d.skipped }; }
       if (d && d.status === 'error') { App.db.doc('jobs/' + jobId).delete().catch(() => {}); throw { code: d.code || 'upstream', message: d.error || '', text: d.text }; }
       // 서버가 강제로 끝나 결과를 못 남긴 경우 (약 3분)
       const age = Date.now() - (d?.at || startedAt);
@@ -150,7 +150,7 @@ function makeSample(sb) {
 
   async function call(input, opts = {}, json = false) {
     const r = await (opts.async && App.db ? callAsync(input, opts, json) : callNow(input, opts, json));
-    App.lastAI = { at: Date.now(), model: r.model, text: r.text.slice(0, 4000) };
+    App.lastAI = { at: Date.now(), model: r.model, primary: r.primary, skipped: r.skipped, text: r.text.slice(0, 4000) };
     opts.onText && opts.onText({ text: r.text, delta: r.text });
     return { text: r.text, truncated: false };
   }
@@ -159,7 +159,7 @@ function makeSample(sb) {
   sample.json = async (input, opts) => toJSON((await call(input, opts, true)).text);
   // 수업 정리처럼 새로고침 뒤에도 이어받아야 하는 작업용
   sample.submitJSON = (input, opts = {}) => submit(input, opts, true);
-  sample.waitJSON = async (jobId, opts = {}) => { const r = await waitJob(jobId, opts); App.lastAI = { at: Date.now(), model: r.model, text: r.text.slice(0, 4000) }; return toJSON(r.text); };
+  sample.waitJSON = async (jobId, opts = {}) => { const r = await waitJob(jobId, opts); App.lastAI = { at: Date.now(), model: r.model, primary: r.primary, skipped: r.skipped, text: r.text.slice(0, 4000) }; return toJSON(r.text); };
   sample.limits = async () => ({ images: { maxCount: 6 } });
   return sample;
 }

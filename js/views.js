@@ -53,7 +53,8 @@ async function getDay() {
   App.dayDoc = d; return d;
 }
 function buildDay() {
-  let review = dueItems(12);
+  const due = dueCount();
+  let review = dueItems(due > 12 ? Math.min(25, due) : 12); // 밀리면 최대 25개까지 늘려요
   if (review.length < 8) {
     const extra = balancedPick(allVocab().filter(v => ['a', 'l'].includes(status(v.id)) && !review.includes(v.id) && (v.l || 5) >= 4).map(v => v.id), 10 - review.length);
     review = review.concat(extra);
@@ -66,7 +67,7 @@ function buildDay() {
   const listen = shuffle(bankQuestions(q => q.area === 'l' && unseen(q))).slice(0, 2);
   const drill = shuffle(App.drill.filter(d => (d.ok || 0) < 2)).slice(0, 3).map(d => d.id);
   return {
-    date: App.today,
+    date: App.today, round: 1, due,
     sec: {
       review: { ids: review, done: false },
       lesson: { refs: lessonQ.slice(0, 6).map(q => ({ bank: q.bank, id: q.id })), lessonIds: last ? (last.grammarIds || []).concat(last.vocabIds || []).slice(0, 12) : [], done: false },
@@ -76,10 +77,11 @@ function buildDay() {
   };
 }
 /* 파트 완료 표시: 시작한 날짜의 세트에, 그 파트만 '완료'로 저장 (다른 기기·새로 불러온 세트와 섞여도 안 사라지게) */
-function markSectionDone(date, key, s) {
+function markSectionDone(date, key, s, round = 1) {
   s.done = true;
-  if (App.dayDoc?.date === date && App.dayDoc.sec?.[key]) App.dayDoc.sec[key].done = true;
+  if (App.dayDoc?.date === date && (App.dayDoc.round || 1) === round && App.dayDoc.sec?.[key]) App.dayDoc.sec[key].done = true;
   mergeWrite('day/' + date, cur => {
+    if (cur?.sec && (cur.round || 1) !== round) return null; // 그사이 새 세트를 받았으면 건드리지 않아요
     if (!cur || !cur.sec) { const d = App.dayDoc?.date === date ? clone(App.dayDoc) : null; if (!d) return null; d.sec[key].done = true; return d; }
     if (cur.sec[key]) cur.sec[key].done = true; else cur.sec[key] = Object.assign({}, s, { done: true });
     return cur;
@@ -89,7 +91,7 @@ function saveDay() {
   if (!App.dayDoc) return;
   const local = clone(App.dayDoc);
   // 다른 기기에서 끝낸 파트는 끝난 상태로 유지
-  mergeWrite('day/' + local.date, cur => { if (!cur || !cur.sec) return local; for (const k of Object.keys(local.sec)) { if (!cur.sec[k]) cur.sec[k] = local.sec[k]; else if (local.sec[k].done) cur.sec[k].done = true; } return cur; })
+  mergeWrite('day/' + local.date, cur => { if (!cur || !cur.sec) return local; if ((cur.round || 1) !== (local.round || 1)) return null; for (const k of Object.keys(local.sec)) { if (!cur.sec[k]) cur.sec[k] = local.sec[k]; else if (local.sec[k].done) cur.sec[k].done = true; } return cur; })
     .then(m => { if (m && App.dayDoc?.date === m.date) for (const k of Object.keys(m.sec || {})) if (m.sec[k]?.done && App.dayDoc.sec[k]) App.dayDoc.sec[k].done = true; }).catch(() => {});
 }
 
@@ -127,7 +129,7 @@ async function renderToday(v) {
   g3.append(card(`N${targetLevel()} 항목 학습 상태`, `전체 ${st.total}개`,
     h('div', { class: 'stack' }, seg('m', 'var(--ok)'), seg('l', 'var(--amber)'), seg('a', 'var(--blue)'), seg('n', 'var(--empty)')),
     h('div', { class: 'legend' }, [['m', '익힘', 'var(--ok)'], ['l', '학습 중', 'var(--amber)'], ['a', '학원에서 배움', 'var(--blue)'], ['n', '미학습', 'var(--empty)']].map(([k, n, c]) => h('div', {}, h('i', { style: `background:${c}` }), n, h('b', {}, st[k])))),
-    h('p', { class: 'muted sm' }, '서로 다른 날 3번 연속 맞히면 "익힘"으로 바뀌어요')));
+    h('p', { class: 'muted sm' }, '서로 다른 날 3번 연속, 또는 4번 연속 맞히면 "익힘"으로 바뀌어요')));
   // quick memo
   const ta = h('textarea', { placeholder: '모르는 단어나 말 못 한 문장을 바로 적어두세요', rows: 3 });
   const recent = App.memos.slice(0, 2);
@@ -140,9 +142,9 @@ async function renderToday(v) {
   setCard.innerHTML = '';
   const sec = day.sec;
   const doneCount = Object.values(sec).filter(s => s.done).length;
-  setCard.append(h('h2', {}, '오늘의 세트', h('span', {}, `${doneCount} / 4 완료`)));
+  setCard.append(h('h2', {}, '오늘의 세트' + ((day.round || 1) > 1 ? ` · ${day.round}회차` : ''), h('span', {}, `${doneCount} / 4 완료`)));
   const rows = [
-    ['review', `복습 단어 ${sec.review.ids.length}개`, '복습일이 된 단어·최근 틀린 항목', 'c-green', '복습', Math.max(4, sec.review.ids.length * 0.6 | 0)],
+    ['review', `복습 단어 ${sec.review.ids.length}개`, (day.due || 0) > sec.review.ids.length && (day.round || 1) === 1 ? `밀린 복습 ${day.due}개 중 오래된 것부터` : '복습일이 된 단어·최근 틀린 항목', 'c-green', '복습', Math.max(4, sec.review.ids.length * 0.6 | 0)],
     ['lesson', (sec.lesson.refs.length || sec.lesson.lessonIds.length) ? `수업 문항 ${sec.lesson.refs.length || Math.min(6, sec.lesson.lessonIds.length)}개` : '수업 문항', App.lessons[0] ? (App.lessons[0].unit || '') + ' · ' + (App.lessons[0].note?.title || '') : '수업 기록 후 생성돼요', 'c-blue', '학원', 7],
     ['drill', `순간 작문 ${sec.drill.ids.length || 3}문장`, '한국어 → 일본어로 바로 말하기', 'c-amber', '회화', 6],
     ['listen', `청해 ${sec.listen.refs.length || 2}문항`, '음성 듣고 풀기', 'c-red', '청해', 5],
@@ -157,7 +159,20 @@ async function renderToday(v) {
       h('span', { class: 'chip ' + (s.done ? 'c-green' : cls) }, s.done ? '완료' : tag), h('div', { class: 'min' }, min + '분')));
   });
   setCard.append(h('div', { class: 'setfoot' }, h('p', {}, firstOpen ? '순서대로 하면 약 25분이에요' : '오늘 세트를 모두 마쳤어요!'),
-    firstOpen ? h('button', { class: 'btn', onclick: () => startSection(firstOpen) }, doneCount ? '이어서 시작 →' : '세트 시작 →') : h('button', { class: 'btn ghost', onclick: () => nav('test') }, '더 풀기')));
+    firstOpen ? h('button', { class: 'btn', onclick: () => startSection(firstOpen) }, doneCount ? '이어서 시작 →' : '세트 시작 →') : h('div', { class: 'row tight gap' }, h('button', { class: 'btn ghost', onclick: () => nav('test') }, '시험 탭'), h('button', { class: 'btn', onclick: e => newRound(e.currentTarget) }, '새 세트 받기 →'))));
+}
+/* 세트를 다 풀면 같은 날에도 새 세트를 하나 더 받아요 (정답률·진도는 푼 만큼 그대로 쌓여요) */
+async function newRound(btn) {
+  btn.disabled = true;
+  const cur = await getDay();
+  const nd = buildDay(); nd.round = (cur.round || 1) + 1;
+  const m = await mergeWrite('day/' + App.today, c => {
+    if (c?.sec && (c.round || 1) >= nd.round) return null; // 다른 기기에서 이미 받았으면 그걸 써요
+    if (c?.sec && Object.values(c.sec).some(x => !x.done)) return null;
+    return nd;
+  }).catch(() => null);
+  App.dayDoc = null; if (m) App.dayDoc = m;
+  nav('today');
 }
 
 function overlay(title) {
@@ -167,7 +182,7 @@ function overlay(title) {
 }
 async function startSection(key) {
   const day = await getDay(); const s = day.sec[key];
-  const finish = () => markSectionDone(day.date, key, s);
+  const finish = () => markSectionDone(day.date, key, s, day.round || 1);
   if (key === 'drill') { const o = overlay('순간 작문'); drillRunner(o.body, s.ids.length ? s.ids : null, () => { finish(); o.close(); nav('today'); }, () => { o.close(); nav('today'); }); return; }
   let qs = [];
   if (key === 'review') qs = s.ids.map(id => ruleQ(id));
@@ -177,7 +192,7 @@ async function startSection(key) {
   if (key === 'listen') { topUp(s.refs, 2, q => q.area === 'l'); qs = s.refs.map(resolveRef).filter(Boolean); }
   qs = qs.filter(Boolean);
   if (!qs.length) {
-    if (key === 'listen' || key === 'lesson') return offerGenerate(key === 'listen' ? 'l' : 'mix', () => { App.dayDoc = null; const nd = buildDay(); mergeWrite('day/' + App.today, cur => { if (cur?.sec) for (const k of Object.keys(nd.sec)) if (cur.sec[k]?.done) nd.sec[k] = cur.sec[k]; return nd; }).then(() => nav('today')); });
+    if (key === 'listen' || key === 'lesson') return offerGenerate(key === 'listen' ? 'l' : 'mix', () => { App.dayDoc = null; const nd = buildDay(); mergeWrite('day/' + App.today, cur => { if (cur?.sec) { nd.round = cur.round || 1; for (const k of Object.keys(nd.sec)) if (cur.sec[k]?.done) nd.sec[k] = cur.sec[k]; } return nd; }).then(() => nav('today')); });
     toast('풀 문제가 없어요.'); return;
   }
   const o = overlay({ review: '복습 단어', lesson: '수업 문항', listen: '청해' }[key]);
@@ -450,7 +465,7 @@ function showLesson(L) {
     L.photos.forEach(async p => { const u = await App.assets.url(p).catch(() => null); if (u) ph.append(h('a', { href: u, target: '_blank', rel: 'noopener', class: 'ph', style: `background-image:url("${u}")` })); });
   }
   if ((L.examples || []).length) body.append(h('h3', { class: 'mini' }, '예문'), h('div', { class: 'exlist' }, L.examples.map(e => h('div', {}, jp(e.j), h('small', {}, e.k)))));
-  body.append(h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: () => { m.close(); const qs = bankQuestions((q, b) => b.source === L.id); const o = overlay(L.unit + ' 테스트'); runQuiz(o.body, shuffle(qs).slice(0, 15).concat(pick(L.vocabIds || [], 5).map(id => ruleQ(id))), { onExit: o.close, onDone: o.close, emptyText: '이 수업의 문제가 아직 없어요.' }); } }, '이 수업 테스트')));
+  body.append(h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: async () => { m.close(); await loadArchive(); const qs = bankQuestions((q, b) => b.source === L.id); const o = overlay(L.unit + ' 테스트'); runQuiz(o.body, shuffle(qs).slice(0, 15).concat(pick(L.vocabIds || [], 5).map(id => ruleQ(id))), { onExit: o.close, onDone: o.close, emptyText: '이 수업의 문제가 아직 없어요.' }); } }, '이 수업 테스트')));
   const m = modal(body, { wide: true });
 }
 
@@ -486,12 +501,22 @@ function renderMemo(v) {
   const saveBtn = h('button', { class: 'btn', onclick: async () => { const t = ta.value.trim(); if (!t) return; const done = busy(saveBtn, 'AI가 정리하는 중…'); try { await saveMemo(t); nav('record', 'memo'); } finally { done(); } } }, '저장');
   wrap.append(card('모임 메모 쓰기', '', ta, h('div', { class: 'row' }, h('label', { class: 'muted sm' }, '다음 모임 ', nextIn), saveBtn),
     h('p', { class: 'muted sm' }, '단어는 단어 DB의 복습 대상으로, 말 못 한 문장은 순간 작문 드릴로 들어가요.')));
-  const list = card('모임 메모 기록', `${App.memos.length}개`);
+  // 날짜별로 묶어서, 누르면 그날 정리된 내용이 펼쳐져요
+  const byDate = new Map();
+  for (const m of App.memos) { const k = m.date || '날짜 없음'; if (!byDate.has(k)) byDate.set(k, []); byDate.get(k).push(m); }
+  const list = card('모임 메모 기록', `${byDate.size}일`);
   if (!App.memos.length) list.append(h('div', { class: 'muted' }, '아직 메모가 없어요.'));
-  for (const m of App.memos.slice(0, 40)) {
-    list.append(h('div', { class: 'memo' }, h('div', { class: 'muted sm' }, m.date), m.entries?.length ? null : h('div', {}, m.text),
-      ...(m.entries || []).map(e => h('div', { class: 'mm' }, h('div', { class: 'jpl', lang: 'ja' }, e.jp + (e.r && e.r !== e.jp ? `（${e.r}）` : '')), h('p', {}, e.ko + (e.why ? ' · ' + e.why : '')),
-        h('div', { class: 'r' }, h('span', { class: 'chip ' + (e.kind === 'word' ? 'c-blue' : 'c-amber') }, e.kind === 'word' ? '단어 DB에 추가' : '순간 작문에 추가'), e.level ? h('span', { class: 'chip c-gray' }, e.level) : null)))));
+  const entryRow = e => h('div', { class: 'mm' }, h('div', { class: 'jpl', lang: 'ja' }, e.jp + (e.r && e.r !== e.jp ? `（${e.r}）` : '')), h('p', {}, e.ko + (e.why ? ' · ' + e.why : '')),
+    h('div', { class: 'r' }, h('span', { class: 'chip ' + (e.kind === 'word' ? 'c-blue' : 'c-amber') }, e.kind === 'word' ? '단어 DB에 들어감 ✓' : '순간 작문에 들어감 ✓'), e.level ? h('span', { class: 'chip c-gray' }, e.level) : null));
+  for (const [date, ms] of byDate) {
+    const ents = ms.flatMap(m => m.entries || []);
+    const nw = ents.filter(e => e.kind === 'word').length, ns = ents.length - nw;
+    const wd = /^\d{4}-\d\d-\d\d$/.test(date) ? '일월화수목금토'[new Date(date + 'T00:00:00').getDay()] : '';
+    list.append(h('details', { class: 'memoday' },
+      h('summary', {}, h('b', {}, date.slice(5).replace('-', '/') + (wd ? ` (${wd})` : '')), h('span', { class: 'muted sm' }, [nw ? `단어 ${nw}` : '', ns ? `문장 ${ns}` : '', ms.length > 1 ? `메모 ${ms.length}개` : ''].filter(Boolean).join(' · ') || '메모')),
+      h('div', { class: 'memoday-b' }, ms.map(m => h('div', { class: 'memo' },
+        h('details', { class: 'orig' }, h('summary', { class: 'muted sm' }, '내가 적은 원문'), h('div', { class: 'sm' }, m.text || '')),
+        ...(m.entries?.length ? m.entries.map(entryRow) : [h('div', {}, m.text)]))))));
   }
   wrap.append(list);
 }
@@ -520,10 +545,10 @@ function renderTest(v, sub) {
   function startMode(k) {
     $$('.mode', side).forEach((b, i) => b.classList.toggle('on', modes[i][0] === k));
     main.innerHTML = '';
-    if (k === 'unit') return unitPicker(main);
+    if (k === 'unit') { main.append(h('div', { class: 'muted' }, '불러오는 중…')); return loadArchive().then(() => { main.innerHTML = ''; unitPicker(main); }); }
     if (k === 'mock') return mockIntro(main);
     if (k === 'area') return areaPicker(main);
-    if (k === 'wrong') return wrongMode(main);
+    if (k === 'wrong') { main.append(h('div', { class: 'muted' }, '불러오는 중…')); return loadArchive().then(() => { main.innerHTML = ''; wrongMode(main); }); }
   }
   function unitPicker(el) {
     el.append(h('h2', {}, '단원 테스트'));
@@ -801,7 +826,7 @@ function renderStats(v) {
       h('div', { class: 'tr' }, ['m', 'l', 'a'].map((k, i) => h('div', { style: `width:${s.total ? s[k] / s.total * 100 : 0}%;background:${['var(--ok)', 'var(--amber)', 'var(--blue)'][i]}` })))));
   }
   const row = h('div', { class: 'grid2 r2' }); v.append(row);
-  row.append(card('주간 정답률', '최근 6주 · 영역별', weeklyChart()));
+  row.append(card('주간 정답률', '최근 4주 · 영역별', weeklyChart()));
   const weak = weakItems(6);
   row.append(card('자주 틀리는 항목', '최근 2주', weak.length ? h('ul', { class: 'weak' }, weak.map(([id, n], i) => { const it = App.byId[id]; return h('li', {}, h('span', { class: 'n' }, String(i + 1)), h('div', { class: 't' }, h('span', { lang: 'ja' }, itemLabel(it)), h('p', {}, (it.r && it.t === 'v' ? it.r + ' · ' : '') + it.m)), h('span', { class: 'cnt' }, n + '회')); })) : h('div', { class: 'muted' }, '아직 틀린 기록이 없어요.')));
   // DB table
@@ -846,17 +871,19 @@ function itemDetail(it, after) {
       h('button', { class: 'btn ghost sm', onclick: () => TTS.speak([{ s: 'N', t: it.t === 'v' ? it.w : it.t === 'k' ? it.c : (it.ej || '') }]) }, '🔈 듣기'))));
 }
 function weeklyChart() {
-  const W = weeklyAccuracy(6);
+  const W = weeklyAccuracy(4);
   const colors = { v: '#2F4A3A', g: '#3D6A8A', r: '#B9852F', l: '#C4553C' };
   const any = W.some(w => Object.values(w.acc).some(a => a[1]));
   if (!any) return h('div', { class: 'empty sm' }, '문제를 풀면 주별 정답률 그래프가 그려져요.');
-  const x = i => 50 + i * 120, y = p => 185 - p * 1.65;
+  const x = i => 80 + i * 180, y = p => 185 - p * 1.65;
   let svg = `<svg viewBox="0 0 720 225" width="100%" role="img" aria-label="주간 정답률"><g stroke="var(--line)">${[100, 70, 40, 10].map(p => `<line x1="40" x2="690" y1="${y(p)}" y2="${y(p)}"/>`).join('')}</g><g font-size="11" fill="var(--muted)">${[100, 70, 40, 10].map(p => `<text x="8" y="${y(p) + 4}">${p}</text>`).join('')}${W.map((w, i) => `<text x="${x(i) - 14}" y="214">${w.label}</text>`).join('')}</g>`;
+  const usedY = [];
   for (const a of ['v', 'g', 'r', 'l']) {
     const pts = W.map((w, i) => w.acc[a][1] ? [x(i), y(w.acc[a][0] / w.acc[a][1] * 100)] : null).filter(Boolean);
     if (!pts.length) continue;
     svg += `<polyline fill="none" stroke="${colors[a]}" stroke-width="3" points="${pts.map(p => p.join(',')).join(' ')}"/>` + pts.map(p => `<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="${colors[a]}"><title>${AREA[a]}</title></circle>`).join('');
-    const l = pts[pts.length - 1]; svg += `<text x="${l[0] + 8}" y="${l[1] + 4}" font-size="12" font-weight="700" fill="${colors[a]}">${AREA[a]}</text>`;
+    const l = pts[pts.length - 1]; let ly = l[1] + 4; while (usedY.some(u => Math.abs(u - ly) < 14)) ly += 14; usedY.push(ly); // 이름표가 겹치지 않게
+    svg += `<text x="${l[0] + 8}" y="${ly}" font-size="12" font-weight="700" fill="${colors[a]}">${AREA[a]}</text>`;
   }
   return h('div', { html: svg + '</svg>' });
 }
@@ -943,12 +970,21 @@ function renderSettings(v) {
   const out = h('div', { class: 'aitest' });
   const tbtn = h('button', { class: 'btn sm', onclick: async () => {
     out.innerHTML = ''; const done = busy(tbtn, '확인 중…');
-    const line = (ok, label, detail) => out.append(h('div', { class: 'kv' }, h('span', {}, (ok ? '✅ ' : '❌ ') + label), h('b', { class: ok ? '' : 'red' }, detail || '')));
+    const line = (ok, label, detail) => { out.append(h('div', { class: 'kv' }, h('span', {}, (ok ? '✅ ' : '❌ ') + label), h('b', { class: ok ? '' : 'red' }, detail || ''))); if (ok) fallbackNote(); };
+    // 기본 모델 대신 다른 모델이 응답했으면 알려줘요 (모델 이름이 바뀌었거나 없어졌을 수 있어요)
+    const fallbackNote = () => {
+      const a = App.lastAI; if (!a?.primary || !a.model || a.model === a.primary) return;
+      out.append(h('div', { class: 'note warn sm' }, `기본 모델 ${a.primary} 대신 ${a.model}가 응답했어요.`, a.skipped?.length ? h('div', { class: 'muted sm' }, a.skipped.join(' / ')) : null,
+        h('div', { class: 'sm' }, /404|not found|model/i.test((a.skipped || []).join(' ')) ? '기본 모델이 없어진 것 같아요. Claude에게 "AI 모델 이름 바꿔줘"라고 요청하세요.' : '잠깐 붐벼서 그럴 수 있어요. 며칠 계속 이러면 모델을 바꿀 때예요.')));
+    };
     try {
       if (!App.sample) { line(false, '연결 설정', 'Supabase 연결 없음'); return; }
       let t0 = Date.now();
       try { const r = await App.sample.json('JSON만 답하세요: {"ok":true,"hello":"こんにちは"}', { modelTier: 'quick', cache: false }); line(!!r, '빠른 모델', [App.lastAI?.model, ((Date.now() - t0) / 1000).toFixed(1) + '초'].filter(Boolean).join(' · ')); }
       catch (e) { line(false, '빠른 모델', aiErrorText(e)); showRaw(e); return; }
+      t0 = Date.now();
+      try { const r = await App.sample.json('JSON만 답하세요: {"ok":true}', { modelTier: 'vision', cache: false }); line(!!r, '사진 읽기 모델', [App.lastAI?.model, ((Date.now() - t0) / 1000).toFixed(1) + '초'].filter(Boolean).join(' · ')); }
+      catch (e) { line(false, '사진 읽기 모델', aiErrorText(e)); }
       t0 = Date.now();
       try {
         const arr = await App.sample.json(`JLPT N5 문법 문제 2개를 만드세요.\n${Q_SPEC}`, { modelTier: 'default', async: true, kind: 'test' });

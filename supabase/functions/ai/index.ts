@@ -40,6 +40,7 @@ async function runModels(contents: Any[], json: boolean, tierName: string, budge
   const started = Date.now();
   const left = () => budgetMs - (Date.now() - started);
   let lastErr = "no model available", lastCode = "upstream";
+  const skipped: string[] = []; // 기본 모델이 안 될 때 이유 기록 (설정의 AI 연결 테스트에서 보여요)
   for (const model of models) {
     if (left() < 8_000) { if (lastCode === "upstream") lastCode = "timeout"; break; }
     let thinking = tier.thinking;
@@ -64,8 +65,9 @@ async function runModels(contents: Any[], json: boolean, tierName: string, budge
       if ([500, 503].includes(r.status) && attempt === 0 && Date.now() - started < 30_000) { await new Promise((res) => setTimeout(res, 1500)); continue; }
       break;
     }
-    if (!r) { if (left() < 8_000) break; continue; }
+    if (!r) { skipped.push(`${model}: 시간 초과`); if (left() < 8_000) break; continue; }
     const msg: string = j?.error?.message ?? `HTTP ${r.status}`;
+    if (!r.ok) skipped.push(`${model}: ${r.status} ${msg.slice(0, 80)}`);
     if (r.status === 404 || (r.status === 400 && /model/i.test(msg))) { lastErr = msg; continue; }
     if ([429, 500, 502, 503, 504].includes(r.status) || /overload|high demand|unavailable|quota/i.test(msg)) {
       lastErr = msg; lastCode = r.status === 429 && !/high demand/i.test(msg) ? "rate_limited" : "overloaded"; continue;
@@ -76,7 +78,7 @@ async function runModels(contents: Any[], json: boolean, tierName: string, budge
     const finish = cand?.finishReason ?? "";
     if (!text && j?.promptFeedback?.blockReason) return { status: 502, body: { error: "blocked: " + j.promptFeedback.blockReason, code: "upstream" } };
     if (finish === "MAX_TOKENS") return { status: 200, body: { error: "output too long", code: "truncated", text, model } };
-    return { status: 200, body: { text, model, finish } };
+    return { status: 200, body: { text, model, finish, primary: models[0], ...(skipped.length ? { skipped } : {}) } };
   }
   return { status: lastCode === "rate_limited" ? 429 : lastCode === "timeout" ? 504 : 503, body: { error: lastErr, code: lastCode } };
 }

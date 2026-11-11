@@ -56,7 +56,7 @@ function buildDay() {
   const due = dueCount();
   let review = dueItems(due > 12 ? Math.min(25, due) : 12); // 밀리면 최대 25개까지 늘려요
   if (review.length < 8) {
-    const extra = balancedPick(allVocab().filter(v => ['a', 'l'].includes(status(v.id)) && !review.includes(v.id) && (v.l || 5) >= 4).map(v => v.id), 10 - review.length);
+    const extra = balancedPick(allVocab().filter(v => ['a', 'l'].includes(status(v.id)) && !review.includes(v.id)).map(v => v.id), 10 - review.length);
     review = review.concat(extra);
   }
   if (review.length < 6) review = review.concat(shuffle(allVocab().filter(v => v.l === targetLevel() && status(v.id) === 'n')).slice(0, 8 - review.length).map(v => v.id));
@@ -494,6 +494,20 @@ JSON 배열만 답하세요: [{"kind":"word|sentence","jp":"정확한 일본어(
   flushSaves();
   toast('메모를 저장했어요.');
 }
+/* 모임 메모 날짜 고치기: 날짜만 바꾸고 정리된 단어·문장은 그대로 */
+function editMemoDate(memo) {
+  const inp = h('input', { type: 'date', value: memo.date || App.today });
+  const m = modal(h('div', {}, h('h2', {}, '메모 날짜 수정'), h('p', { class: 'muted' }, '이 메모가 어느 모임 날짜인지 바꿔요. 정리된 단어와 문장은 그대로예요.'), inp,
+    h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => m.close() }, '취소'), h('button', { class: 'btn', onclick: async e => {
+      const d = inp.value; if (!/^\d{4}-\d\d-\d\d$/.test(d)) { toast('날짜를 골라 주세요.'); return; }
+      const done = busy(e.currentTarget, '저장 중…');
+      try {
+        const r = await mergeWrite('memos/' + memo.id, cur => cur ? Object.assign(cur, { date: d }) : null);
+        if (!r) throw 0;
+        memo.date = d; m.close(); toast('날짜를 바꿨어요.'); nav('record', 'memo');
+      } catch { toast('저장하지 못했어요. 다시 시도해 주세요.', 'err'); done(); }
+    } }, '저장'))));
+}
 function renderMemo(v) {
   const wrap = h('div', { class: 'grid2' }); v.append(wrap);
   const ta = h('textarea', { rows: 5, placeholder: '예) しゅうしょく 이란 단어 못 알아들음 / "주말에 친구를 만났어요" 말 못 함' });
@@ -503,7 +517,7 @@ function renderMemo(v) {
     h('p', { class: 'muted sm' }, '단어는 단어 DB의 복습 대상으로, 말 못 한 문장은 순간 작문 드릴로 들어가요.')));
   // 날짜별로 묶어서, 누르면 그날 정리된 내용이 펼쳐져요
   const byDate = new Map();
-  for (const m of App.memos) { const k = m.date || '날짜 없음'; if (!byDate.has(k)) byDate.set(k, []); byDate.get(k).push(m); }
+  for (const m of [...App.memos].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || (b.at || 0) - (a.at || 0))) { const k = m.date || '날짜 없음'; if (!byDate.has(k)) byDate.set(k, []); byDate.get(k).push(m); }
   const list = card('모임 메모 기록', `${byDate.size}일`);
   if (!App.memos.length) list.append(h('div', { class: 'muted' }, '아직 메모가 없어요.'));
   const entryRow = e => h('div', { class: 'mm' }, h('div', { class: 'jpl', lang: 'ja' }, e.jp + (e.r && e.r !== e.jp ? `（${e.r}）` : '')), h('p', {}, e.ko + (e.why ? ' · ' + e.why : '')),
@@ -515,7 +529,8 @@ function renderMemo(v) {
     list.append(h('details', { class: 'memoday' },
       h('summary', {}, h('b', {}, date.slice(5).replace('-', '/') + (wd ? ` (${wd})` : '')), h('span', { class: 'muted sm' }, [nw ? `단어 ${nw}` : '', ns ? `문장 ${ns}` : '', ms.length > 1 ? `메모 ${ms.length}개` : ''].filter(Boolean).join(' · ') || '메모')),
       h('div', { class: 'memoday-b' }, ms.map(m => h('div', { class: 'memo' },
-        h('details', { class: 'orig' }, h('summary', { class: 'muted sm' }, '내가 적은 원문'), h('div', { class: 'sm' }, m.text || '')),
+        h('div', { class: 'row' }, h('details', { class: 'orig' }, h('summary', { class: 'muted sm' }, '내가 적은 원문'), h('div', { class: 'sm' }, m.text || '')),
+          h('button', { class: 'btn ghost sm', onclick: () => editMemoDate(m) }, '📅 날짜 수정')),
         ...(m.entries?.length ? m.entries.map(entryRow) : [h('div', {}, m.text)]))))));
   }
   wrap.append(list);

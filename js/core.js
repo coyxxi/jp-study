@@ -57,7 +57,8 @@ async function loadMaster() {
   const [m, ex] = await Promise.all([
     fetch('data/master.json').then(r => r.json()),
     fetch('data/examples.json').then(r => r.json()).catch(() => []),
-  ]);
+    fetch('data/groups.json').then(r => r.json()).catch(() => ({ kanji: [], grammar: [] })),
+  ]).then(([m, ex, gr]) => { App.G = gr; return [m, ex]; });
   App.M = m; App.EX = ex;
   for (const v of m.vocab) { v.t = 'v'; App.byId[v.id] = v; }
   for (const k of m.kanji) { k.t = 'k'; App.byId[k.id] = k; }
@@ -661,6 +662,8 @@ async function loadAll() {
       db.collection('memos').orderBy('at', 'desc').limit(200).get(), db.collection('qbank').get(),
       db.collection('log').get(),
     ]);
+    const gsSnap = await db.doc('state/groups').get().catch(() => null);
+    App.gs = gsSnap?.exists ? clone(gsSnap.data()) : { k: {}, g: {} };
     App.state = st.exists ? clone(st.data()) : {};
     App.wrong = wr.exists ? clone(wr.data().list || []) : [];
     App.drill = dr.exists ? clone(dr.data().list || []) : [];

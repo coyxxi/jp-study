@@ -97,7 +97,8 @@ function studyKanji(v) {
     const ids = rows.map(r => r.id);
     info.append(h('span', { class: 'muted' }, `${rows.length}자`), h('div', { class: 'row tight gap' },
       h('button', { class: 'btn sm', disabled: !rows.length, onclick: () => { const o = overlay('한자 카드'); flashcards(o.body, priority(ids).slice(0, 25), { onExit: o.close, onDone: () => { o.close(); nav('study', 'kanji'); } }); } }, '카드로 외우기'),
-      h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => { const vids = priority(rows.flatMap(k => relatedWords(k.c).slice(0, 2).map(w => w.id))).slice(0, 15); const o = overlay('한자 읽기 퀴즈'); runQuiz(o.body, vids.map(id => ruleQ(id, 'read')).concat(pick(ids, 5).map(id => ruleQ(id))), { onExit: o.close, onDone: () => { o.close(); nav('study', 'kanji'); } }); } }, '읽기 퀴즈')));
+      h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => { const vids = priority(rows.flatMap(k => relatedWords(k.c).slice(0, 2).map(w => w.id))).slice(0, 15); const o = overlay('한자 읽기 퀴즈'); runQuiz(o.body, vids.map(id => ruleQ(id, 'read')).concat(pick(ids, 5).map(id => ruleQ(id))), { onExit: o.close, onDone: () => { o.close(); nav('study', 'kanji'); } }); } }, '읽기 퀴즈'),
+      h('button', { class: 'btn ghost sm', onclick: () => groupList('k') }, '🧩 한자 묶음')));
     for (const k of rows) {
       const st = status(k.id);
       grid.append(h('button', { class: 'ktile st-' + st, onclick: () => kanjiDetail(k, compute) }, h('span', { class: 'kc jp-serif', lang: 'ja' }, k.c), h('span', { class: 'km' }, k.m)));
@@ -135,7 +136,8 @@ function studyGrammar(v) {
     const ids = rows.map(r => r.id);
     info.append(h('span', { class: 'muted' }, `${rows.length}개`), h('div', { class: 'row tight gap' },
       h('button', { class: 'btn sm', disabled: !rows.length, onclick: () => { const o = overlay('문법 카드'); flashcards(o.body, priority(ids).slice(0, 20), { onExit: o.close, onDone: () => { o.close(); nav('study', 'grammar'); } }); } }, '카드로 외우기'),
-      h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => grammarQuiz(ids) }, '문제 풀기')));
+      h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => grammarQuiz(ids) }, '문제 풀기'),
+      h('button', { class: 'btn ghost sm', onclick: () => groupList('g') }, '⚖️ 비슷한 문법 비교')));
     for (const g of rows) list.append(grammarCard(g, compute));
     if (!rows.length) list.append(h('div', { class: 'empty sm' }, '조건에 맞는 문법이 없어요.'));
   }

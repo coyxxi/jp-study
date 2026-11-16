@@ -50,11 +50,21 @@ async function getDay() {
   let d = null;
   if (App.db) { const s = await App.db.doc(path).get().catch(() => null); if (s?.exists) d = JSON.parse(JSON.stringify(s.data())); }
   if (!d) { d = buildDay(); if (App.db) mergeWrite(path, cur => cur || d).then(m => { if (m && m.sec && App.dayDoc === d && !Object.values(d.sec).some(x => x.done)) App.dayDoc = m; }).catch(() => {}); }
+  // 오늘 세트를 만든 뒤에 한자 묶음·문법 비교가 생겼으면 오늘 세트에 더해요
+  if (d.sec && (!d.sec.kanji || !d.sec.gram)) {
+    const add = {};
+    if (!d.sec.kanji) add.kanji = d.sec.kanji = Object.assign({ done: false }, pickDailyGroup('k') || { gid: null });
+    if (!d.sec.gram) add.gram = d.sec.gram = Object.assign({ done: false }, pickDailyGroup('g') || { gid: null });
+    if (App.db) mergeWrite(path, cur => { if (!cur?.sec) return null; for (const [k, v] of Object.entries(add)) if (!cur.sec[k]) cur.sec[k] = v; return cur; }).catch(() => {});
+  }
   App.dayDoc = d; return d;
 }
 function buildDay() {
   const due = dueCount();
   let review = dueItems(due > 12 ? Math.min(25, due) : 12); // 밀리면 최대 25개까지 늘려요
+  // 수업에서 배운 문법은 3일 뒤·1주 뒤에 다시 나와요
+  const back = App.lessons.filter(L => L.date && [3, 7].includes(daysBetween(L.date, App.today))).flatMap(L => L.grammarIds || []);
+  review = [...new Set(back.slice(0, 4).concat(review))];
   if (review.length < 8) {
     const extra = balancedPick(allVocab().filter(v => ['a', 'l'].includes(status(v.id)) && !review.includes(v.id)).map(v => v.id), 10 - review.length);
     review = review.concat(extra);
@@ -71,6 +81,8 @@ function buildDay() {
     sec: {
       review: { ids: review, done: false },
       lesson: { refs: lessonQ.slice(0, 6).map(q => ({ bank: q.bank, id: q.id })), lessonIds: last ? (last.grammarIds || []).concat(last.vocabIds || []).slice(0, 12) : [], done: false },
+      kanji: Object.assign({ done: false }, pickDailyGroup('k') || { gid: null }),
+      gram: Object.assign({ done: false }, pickDailyGroup('g') || { gid: null }),
       drill: { ids: drill, done: false },
       listen: { refs: listen.map(q => ({ bank: q.bank, id: q.id })), done: false },
     },
@@ -141,14 +153,17 @@ async function renderToday(v) {
   const day = await getDay();
   setCard.innerHTML = '';
   const sec = day.sec;
-  const doneCount = Object.values(sec).filter(s => s.done).length;
-  setCard.append(h('h2', {}, '오늘의 세트' + ((day.round || 1) > 1 ? ` · ${day.round}회차` : ''), h('span', {}, `${doneCount} / 4 완료`)));
+  const kgG = sec.kanji?.gid && findGroup('k', sec.kanji.gid), ggG = sec.gram?.gid && findGroup('g', sec.gram.gid);
   const rows = [
     ['review', `복습 단어 ${sec.review.ids.length}개`, (day.due || 0) > sec.review.ids.length && (day.round || 1) === 1 ? `밀린 복습 ${day.due}개 중 오래된 것부터` : '복습일이 된 단어·최근 틀린 항목', 'c-green', '복습', Math.max(4, sec.review.ids.length * 0.6 | 0)],
     ['lesson', (sec.lesson.refs.length || sec.lesson.lessonIds.length) ? `수업 문항 ${sec.lesson.refs.length || Math.min(6, sec.lesson.lessonIds.length)}개` : '수업 문항', App.lessons[0] ? (App.lessons[0].unit || '') + ' · ' + (App.lessons[0].note?.title || '') : '수업 기록 후 생성돼요', 'c-blue', '학원', 7],
+    sec.kanji && kgG ? ['kanji', `한자 묶음 · ${kgG.title}`, (sec.kanji.fresh ? '새 묶음' : '복습 묶음') + ` ${kgG.ids.map(id => App.byId[id]?.c).join('')}` + (sec.kanji.rev?.length ? ` + 복습 ${sec.kanji.rev.length}묶음` : ''), 'c-red', '한자', 8] : null,
+    sec.gram && ggG ? ['gram', `문법 비교 · ${ggG.title}`, '비슷한 문법을 나란히 보고 골라 보기', 'c-blue', '문법', 6] : null,
     ['drill', `순간 작문 ${sec.drill.ids.length || 3}문장`, '한국어 → 일본어로 바로 말하기', 'c-amber', '회화', 6],
     ['listen', `청해 ${sec.listen.refs.length || 2}문항`, '음성 듣고 풀기', 'c-red', '청해', 5],
-  ];
+  ].filter(Boolean);
+  const doneCount = rows.filter(r => sec[r[0]]?.done).length;
+  setCard.append(h('h2', {}, '오늘의 세트' + ((day.round || 1) > 1 ? ` · ${day.round}회차` : ''), h('span', {}, `${doneCount} / ${rows.length} 완료`)));
   let firstOpen = null;
   rows.forEach(([key, title, desc, cls, tag, min], idx) => {
     const s = sec[key];
@@ -158,7 +173,7 @@ async function renderToday(v) {
       h('div', { class: 't' }, h('b', {}, title), h('p', {}, desc)),
       h('span', { class: 'chip ' + (s.done ? 'c-green' : cls) }, s.done ? '완료' : tag), h('div', { class: 'min' }, min + '분')));
   });
-  setCard.append(h('div', { class: 'setfoot' }, h('p', {}, firstOpen ? '순서대로 하면 약 25분이에요' : '오늘 세트를 모두 마쳤어요!'),
+  setCard.append(h('div', { class: 'setfoot' }, h('p', {}, firstOpen ? `순서대로 하면 약 ${rows.reduce((a, r) => a + (sec[r[0]].done ? 0 : r[5]), 0)}분이에요` : '오늘 세트를 모두 마쳤어요!'),
     firstOpen ? h('button', { class: 'btn', onclick: () => startSection(firstOpen) }, doneCount ? '이어서 시작 →' : '세트 시작 →') : h('div', { class: 'row tight gap' }, h('button', { class: 'btn ghost', onclick: () => nav('test') }, '시험 탭'), h('button', { class: 'btn', onclick: e => newRound(e.currentTarget) }, '새 세트 받기 →'))));
 }
 /* 세트를 다 풀면 같은 날에도 새 세트를 하나 더 받아요 (정답률·진도는 푼 만큼 그대로 쌓여요) */
@@ -183,6 +198,8 @@ function overlay(title) {
 async function startSection(key) {
   const day = await getDay(); const s = day.sec[key];
   const finish = () => markSectionDone(day.date, key, s, day.round || 1);
+  if (key === 'kanji') { if (!s.gid) return toast('오늘 할 한자 묶음이 없어요.'); studyKanjiGroup(s.gid, { rev: s.rev, onFinish: finish, onDone: () => nav('today'), onExit: () => nav('today'), doneText: '오늘 화면으로' }); return; }
+  if (key === 'gram') { if (!s.gid) return toast('오늘 할 문법 비교가 없어요.'); studyGrammarGroup(s.gid, { onFinish: finish, onDone: () => nav('today'), onExit: () => nav('today'), doneText: '오늘 화면으로' }); return; }
   if (key === 'drill') { const o = overlay('순간 작문'); drillRunner(o.body, s.ids.length ? s.ids : null, () => { finish(); o.close(); nav('today'); }, () => { o.close(); nav('today'); }); return; }
   let qs = [];
   if (key === 'review') qs = s.ids.map(id => ruleQ(id));

@@ -183,13 +183,15 @@ js/quiz.js                    시험 화면
 js/views.js                   오늘 · 기록 · 시험 · 회화 · 내 실력
 js/study.js                   공부 (단어장 · 한자 · 문법 · 카드)
 js/supa.js                    Supabase 연결 (DB · 사진 · AI)
-data/master.json              N5·N4 단어 · 한자 · 문법 기본 데이터
+data/master.json              N5~N2 단어 · 한자 · 문법 기본 데이터
 data/examples.json            예문 889개 (기존 시트)
 data/seed-learned.json        기존 시트에서 배운 항목 목록
 supabase/schema.sql           2단계에서 실행할 SQL
 supabase/functions/ai/index.ts  4단계 AI 함수
 supabase/functions/daily/index.ts  8단계 매일 자동 문제
 js/lookup.js                  시험 중 단어 찾기
+js/groups.js                  한자 묶음 · 문법 비교 묶음
+data/groups.json              한자 묶음 95개 · 문법 비교 21개
 ```
 
 **데이터 출처**

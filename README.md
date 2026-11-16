@@ -193,7 +193,7 @@ js/lookup.js                  시험 중 단어 찾기
 js/groups.js                  한자 묶음 · 문법 비교 묶음
 data/groups.json              한자 묶음 95개 · 문법 비교 21개
 js/strokes.js                 한자 획순 보기 · 따라 쓰기
-data/strokes-5.json 등        한자 획순 자료 (레벨별)
+data/strokes-5.json 등        한자 획순 자료 (레벨별, strokes-1은 N1·상용한자)
 ```
 
 **데이터 출처**

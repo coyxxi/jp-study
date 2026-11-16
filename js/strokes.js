@@ -2,12 +2,12 @@
 'use strict';
 const STROKE_CACHE = {};
 function loadStrokes(level) {
-  const l = [5, 4, 3, 2].includes(level) ? level : 2;
+  const l = [5, 4, 3, 2, 1].includes(level) ? level : 1;
   if (!STROKE_CACHE[l]) STROKE_CACHE[l] = fetch(`data/strokes-${l}.json`).then(r => { if (!r.ok) throw 0; return r.json(); }).catch(e => { delete STROKE_CACHE[l]; throw e; });
   return STROKE_CACHE[l];
 }
 async function strokeData(k) {
-  for (const l of [k.l, 5, 4, 3, 2]) { try { const d = await loadStrokes(l); if (d[k.c]) return d[k.c]; } catch { } }
+  for (const l of [k.l, 5, 4, 3, 2, 1]) { try { const d = await loadStrokes(l); if (d[k.c]) return d[k.c]; } catch { } }
   return null;
 }
 const SVGNS = 'http://www.w3.org/2000/svg';

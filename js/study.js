@@ -51,7 +51,7 @@ function studyVocab(v) {
     if (fSrc.value === 'lesson-all') srcSet = new Set(App.lessons.flatMap(L => L.vocabIds || []));
     else if (fSrc.value === 'memo') srcSet = memoIds();
     else if (fSrc.value.startsWith('L:')) srcSet = new Set(App.lessons.find(L => 'L:' + L.id === fSrc.value)?.vocabIds || []);
-    rows = allVocab().filter(it => (!fLv.value || String(it.l || 0) === fLv.value) && statusMatch(it.id, fSt.value)
+    rows = allVocab().filter(it => (s || !fLv.value || String(it.l || 0) === fLv.value) && statusMatch(it.id, fSt.value)
       && (fSrc.value !== 'sheet' || it.src === '시트' || chunkOf(it.id) === 'WS') && (!srcSet || srcSet.has(it.id))
       && (!s || [it.w, it.r, it.m].some(x => x && String(x).toLowerCase().includes(s))));
     page = 0; draw(true);
@@ -86,13 +86,17 @@ function studyVocab(v) {
 function studyKanji(v) {
   const pf = studyPrefs.kanji = studyPrefs.kanji || { lv: String(targetLevel()), st: '' };
   const q = h('input', { placeholder: '한자, 뜻, 읽기 검색…', value: pf.q || '' });
-  const fLv = sel([['', '전 레벨'], ['5', 'N5'], ['4', 'N4']], pf.lv), fSt = sel(ST_OPTS, pf.st);
+  const fLv = sel([['', '전 레벨'], ['5', 'N5'], ['4', 'N4'], ['3', 'N3'], ['2', 'N2'], ['1', 'N1 이상 (사전)']], pf.lv), fSt = sel(ST_OPTS, pf.st);
   const info = h('div', { class: 'studybar' }); const grid = h('div', { class: 'kgrid' });
   v.append(h('div', { class: 'card' }, h('div', { class: 'search' }, q, fLv, fSt), info, grid));
   function compute() {
     Object.assign(pf, { q: q.value, lv: fLv.value, st: fSt.value }); savePrefs();
     const s = q.value.trim();
-    const rows = App.M.kanji.filter(k => (!fLv.value || String(k.l) === fLv.value) && statusMatch(k.id, fSt.value) && (!s || [k.c, k.m, k.on, k.kun].some(x => x && x.includes(s))));
+    // 검색할 때는 전 레벨에서 찾아요. 「癒す」처럼 단어로 넣어도 그 안의 한자를 찾아요
+    const qk = new Set([...s].filter(ch => /[一-龯々]/.test(ch)));
+    const norm = x => String(x || '').replace(/[.\-・]/g, '');
+    const rows = App.M.kanji.filter(k => (s || !fLv.value || String(k.l) === fLv.value) && statusMatch(k.id, fSt.value) && (!s || qk.has(k.c) || [k.m, k.on, k.kun].some(x => x && (x.includes(s) || String(x).split('・').some(y => norm(y) === s || norm(y).startsWith(s))))))
+      .sort((a, b) => (s ? (qk.has(b.c) - qk.has(a.c)) || (b.l - a.l) : 0));
     info.innerHTML = ''; grid.innerHTML = '';
     const ids = rows.map(r => r.id);
     info.append(h('span', { class: 'muted' }, `${rows.length}자`), h('div', { class: 'row tight gap' },
@@ -114,7 +118,7 @@ function kanjiDetail(k, after) {
   const p = P(k.id) || {};
   const s = sel(Object.entries(STATUS), p.s || 'n');
   const m = modal(h('div', { class: 'kdetail' },
-    h('div', { class: 'khead' }, h('div', { class: 'kbig jp-serif', lang: 'ja' }, k.c), h('div', {}, h('div', { class: 'big' }, k.m), h('div', { class: 'kv' }, h('span', {}, '음독'), h('b', { lang: 'ja' }, k.on || '-')), h('div', { class: 'kv' }, h('span', {}, '훈독'), h('b', { lang: 'ja' }, k.kun || '-')), h('span', { class: 'chip c-gray' }, 'N' + k.l))),
+    h('div', { class: 'khead' }, h('div', { class: 'kbig jp-serif', lang: 'ja' }, k.c), h('div', {}, h('div', { class: 'big' }, k.m), h('div', { class: 'kv' }, h('span', {}, '음독'), h('b', { lang: 'ja' }, k.on || '-')), h('div', { class: 'kv' }, h('span', {}, '훈독'), h('b', { lang: 'ja' }, k.kun || '-')), h('span', { class: 'chip c-gray' }, k.l === 1 ? 'N1 이상 (사전)' : 'N' + k.l))),
     h('h3', { class: 'mini' }, '획순'), strokeBox(k, { size: 180 }), h('p', { class: 'muted sm stk-credit' }, '획순 자료: KanjiVG (CC BY-SA 3.0)'),
     h('h3', { class: 'mini' }, `이 한자가 들어간 단어 ${words.length}개`),
     words.length ? h('div', { class: 'rwords' }, words.map(w => h('div', { class: 'rw' }, h('span', { lang: 'ja', class: 'jpl' }, w.w), h('span', { lang: 'ja', class: 'muted' }, w.r), h('span', {}, w.m), h('span', { class: 'chip ' + STATUS_CLS[status(w.id)] }, STATUS[status(w.id)]), sayBtn(w.w)))) : h('div', { class: 'muted' }, '단어장에 아직 이 한자가 들어간 단어가 없어요.'),
@@ -132,7 +136,7 @@ function studyGrammar(v) {
   function compute() {
     Object.assign(pf, { q: q.value, lv: fLv.value, st: fSt.value }); savePrefs();
     const s = q.value.trim();
-    const rows = allGrammar().filter(g => (!fLv.value || String(g.l || 0) === fLv.value) && statusMatch(g.id, fSt.value) && (!s || [g.p, g.m, g.f, g.ej].some(x => x && x.includes(s))));
+    const rows = allGrammar().filter(g => (s || !fLv.value || String(g.l || 0) === fLv.value) && statusMatch(g.id, fSt.value) && (!s || [g.p, g.m, g.f, g.ej].some(x => x && x.includes(s))));
     info.innerHTML = ''; list.innerHTML = '';
     const ids = rows.map(r => r.id);
     info.append(h('span', { class: 'muted' }, `${rows.length}개`), h('div', { class: 'row tight gap' },

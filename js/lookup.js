@@ -73,6 +73,10 @@ function makeLookup() {
       resBox.append(wordCard(hits[0])); remember(hits[0]);
       if (hits.length > 1) resBox.append(h('div', { class: 'lk-more' }, '비슷한 단어', hits.slice(1, 5).map(v => h('button', { onclick: () => { input.value = v.w; render(v.w); } }, h('b', { lang: 'ja' }, v.w), ' ', h('span', { class: 'muted' }, v.m)))));
     } else resBox.append(h('div', { class: 'lk-tip' }, `"${plainJa(q)}"은(는) 단어장에 없어요.`));
+    // 검색어 속 한자의 뜻·음 (단어장에 없는 어려운 한자도 한자 사전에서 보여줘요)
+    const inWord = new Set(hits.length ? [...(hits[0].w || '')] : []);
+    const qks = [...new Set([...plainJa(q)].filter(c => KANJI_RE.test(c)))].filter(c => !inWord.has(c)).map(kanjiInfo).filter(Boolean).slice(0, 4);
+    if (qks.length) resBox.append(h('div', { class: 'lk-kanji lk-kq' }, qks.map(k => h('div', {}, h('b', { lang: 'ja' }, k.c), ' ', k.m, h('small', { class: 'muted', lang: 'ja' }, ` · 음 ${k.on || '-'} · 훈 ${k.kun || '-'}`), typeof showStrokes === 'function' ? h('button', { class: 'linkbtn', onclick: () => showStrokes(k) }, ' ✍️ 획순') : null))));
     if (App.sample) {
       const ask = h('button', { class: 'linkbtn', onclick: async () => {
         const done = busy(ask, 'AI가 찾는 중…');

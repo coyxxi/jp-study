@@ -314,7 +314,8 @@ ruby{ruby-position:over}rt{font-size:.5em;color:var(--muted);font-weight:400;use
   const base = location.origin + location.pathname.replace(/[^/]*$/, '');
   if (App.state.site !== base) { App.state.site = base; saveState(); }
   App.ready = true;
-  setTimeout(() => archiveOldBanks().catch(() => {}), 8000); // 다 푼 오래된 문제 묶음 보관 (첫 화면 속도 유지)
+  setTimeout(() => archiveOldBanks().catch(() => {}), 8000);
+  setTimeout(() => cleanupCustomDups().catch(() => {}), 5000); // 겹치는 단어 정리 (기록은 합쳐서 남김)
   let start = 'today'; try { start = localStorage.getItem('jp.tab') || 'today'; } catch { }
   nav(TABS.some(t => t[0] === start) ? start : 'today');
   // 다른 기기에서 공부한 내용이 보이도록, 한동안 안 보다가 돌아오면 최신 기록을 다시 불러와요

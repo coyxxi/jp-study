@@ -105,7 +105,7 @@ function kanjiGroupQuestions(g, max = 8) {
   const ks = g.ids.map(id => App.byId[id]).filter(Boolean);
   const qs = [];
   const fill = (opts, pool) => { for (const x of shuffle(pool)) { if (opts.length >= 4) break; if (x && !opts.includes(x)) opts.push(x); } return opts; };
-  const allMeanings = App.M.kanji.map(k => k.m);
+  const allMeanings = App.M.kanji.filter(k => k.l >= 2).map(k => k.m);
   for (const k of shuffle(ks)) {
     const others = ks.filter(x => x !== k);
     const word = groupWords(k.c, 3).find(w => /[一-龯]/.test(w.w));

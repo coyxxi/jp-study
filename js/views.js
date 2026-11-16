@@ -74,7 +74,6 @@ function buildDay() {
   const unseen = q => !q.seen;
   let lessonQ = last ? bankQuestions((q, b) => b.source === last.id && q.area !== 'l' && unseen(q)) : [];
   if (lessonQ.length < 6) lessonQ = lessonQ.concat(bankQuestions(q => q.area !== 'l' && unseen(q) && !lessonQ.find(x => x.id === q.id)));
-  const listen = shuffle(bankQuestions(q => q.area === 'l' && unseen(q))).slice(0, 2);
   const drill = shuffle(App.drill.filter(d => (d.ok || 0) < 2)).slice(0, 3).map(d => d.id);
   return {
     date: App.today, round: 1, due,
@@ -84,7 +83,6 @@ function buildDay() {
       kanji: Object.assign({ done: false }, pickDailyGroup('k') || { gid: null }),
       gram: Object.assign({ done: false }, pickDailyGroup('g') || { gid: null }),
       drill: { ids: drill, done: false },
-      listen: { refs: listen.map(q => ({ bank: q.bank, id: q.id })), done: false },
     },
   };
 }
@@ -176,16 +174,21 @@ async function renderToday(v) {
     firstOpen ? h('button', { class: 'btn', onclick: () => startSection(firstOpen) }, doneCount ? '이어서 시작 →' : '세트 시작 →') : h('div', { class: 'row tight gap' }, h('button', { class: 'btn ghost', onclick: () => nav('test') }, '시험 탭'), h('button', { class: 'btn', onclick: e => newRound(e.currentTarget) }, '새 세트 받기 →'))));
 }
 /* 세트를 다 풀면 같은 날에도 새 세트를 하나 더 받아요 (정답률·진도는 푼 만큼 그대로 쌓여요) */
+/* 오늘 세트에서 화면에 보이는 파트 (청해는 따로 풀기로 해서 빼요) */
+const SET_ORDER = ['review', 'lesson', 'kanji', 'gram', 'drill'];
+function setKeys(sec) { return SET_ORDER.filter(k => sec[k] && !((k === 'kanji' && !(sec.kanji.gid && findGroup('k', sec.kanji.gid))) || (k === 'gram' && !(sec.gram.gid && findGroup('g', sec.gram.gid))))); }
 async function newRound(btn) {
   btn.disabled = true;
   const cur = await getDay();
   const nd = buildDay(); nd.round = (cur.round || 1) + 1;
   const m = await mergeWrite('day/' + App.today, c => {
     if (c?.sec && (c.round || 1) >= nd.round) return null; // 다른 기기에서 이미 받았으면 그걸 써요
-    if (c?.sec && Object.values(c.sec).some(x => !x.done)) return null;
+    // 화면에 보이는 파트만 확인해요 (예전 세트에 남아 있는 청해 파트는 빼고)
+    if (c?.sec && setKeys(c.sec).some(k => !c.sec[k].done)) return null;
     return nd;
   }).catch(() => null);
   App.dayDoc = null; if (m) App.dayDoc = m;
+  if (m) toast(`${nd.round}회차 세트를 만들었어요.`); else toast('새 세트를 만들지 못했어요. 다시 눌러 주세요.', 'err');
   nav('today');
 }
 
@@ -864,7 +867,7 @@ function renderStats(v) {
   const db = card('전체 학습 항목', `마스터 DB · ${allVocab().length + App.M.kanji.length + allGrammar().length}개`); v.append(db);
   const q = h('input', { placeholder: '단어, 한자, 문법, 뜻 검색…' });
   const fType = h('select', {}, [['', '전체'], ['v', '단어'], ['k', '한자'], ['g', '문법']].map(([k, n]) => h('option', { value: k }, n)));
-  const fLv = h('select', {}, [['', '전 레벨'], ['5', 'N5'], ['4', 'N4'], ['3', 'N3'], ['2', 'N2'], ['0', '기타']].map(([k, n]) => h('option', { value: k }, n)));
+  const fLv = h('select', {}, [['', '전 레벨'], ['5', 'N5'], ['4', 'N4'], ['3', 'N3'], ['2', 'N2'], ['1', 'N1'], ['0', '기타']].map(([k, n]) => h('option', { value: k }, n)));
   const fSt = h('select', {}, [['', '전 상태'], ...Object.entries(STATUS)].map(([k, n]) => h('option', { value: k }, n)));
   const tbl = h('div', { class: 'tblwrap' }); let page = 0;
   const more = h('button', { class: 'linkbtn', onclick: () => { page++; draw(false); } }, '더 보기');

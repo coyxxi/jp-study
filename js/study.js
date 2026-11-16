@@ -115,6 +115,7 @@ function kanjiDetail(k, after) {
   const s = sel(Object.entries(STATUS), p.s || 'n');
   const m = modal(h('div', { class: 'kdetail' },
     h('div', { class: 'khead' }, h('div', { class: 'kbig jp-serif', lang: 'ja' }, k.c), h('div', {}, h('div', { class: 'big' }, k.m), h('div', { class: 'kv' }, h('span', {}, '음독'), h('b', { lang: 'ja' }, k.on || '-')), h('div', { class: 'kv' }, h('span', {}, '훈독'), h('b', { lang: 'ja' }, k.kun || '-')), h('span', { class: 'chip c-gray' }, 'N' + k.l))),
+    h('h3', { class: 'mini' }, '획순'), strokeBox(k, { size: 180 }), h('p', { class: 'muted sm stk-credit' }, '획순 자료: KanjiVG (CC BY-SA 3.0)'),
     h('h3', { class: 'mini' }, `이 한자가 들어간 단어 ${words.length}개`),
     words.length ? h('div', { class: 'rwords' }, words.map(w => h('div', { class: 'rw' }, h('span', { lang: 'ja', class: 'jpl' }, w.w), h('span', { lang: 'ja', class: 'muted' }, w.r), h('span', {}, w.m), h('span', { class: 'chip ' + STATUS_CLS[status(w.id)] }, STATUS[status(w.id)]), sayBtn(w.w)))) : h('div', { class: 'muted' }, '단어장에 아직 이 한자가 들어간 단어가 없어요.'),
     h('div', { class: 'row' }, h('label', {}, '상태 ', s), h('button', { class: 'btn sm', onclick: () => { const q = ensureP(k.id); q.s = s.value; if (s.value === 'm') q.c = Math.max(q.c || 0, 3); markDirty('prog:' + chunkOf(k.id)); flushSaves(); m.close(); after && after(); } }, '저장'),

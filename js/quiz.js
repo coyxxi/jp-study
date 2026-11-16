@@ -72,6 +72,17 @@ function meaningBox(q, open) {
   fill();
   return box;
 }
+/* 문제에 나온 한자 (한자 항목이면 그 한자, 단어면 단어 속 한자) — 답한 뒤 획순 버튼용 */
+function kanjiOfQuestion(q) {
+  const byC = kanjiOfQuestion.map || (kanjiOfQuestion.map = Object.fromEntries(App.M.kanji.map(k => [k.c, k])));
+  const out = [];
+  for (const id of q.items || []) {
+    const it = App.byId[id]; if (!it) continue;
+    if (it.t === 'k') out.push(it);
+    else if (it.t === 'v') for (const ch of it.w) if (byC[ch]) out.push(byC[ch]);
+  }
+  return [...new Set(out)].slice(0, 3);
+}
 function runQuiz(root, qs, opts = {}) {
   const mode = opts.mode || 'practice';
   qs = qs.filter(Boolean);
@@ -144,6 +155,8 @@ function runQuiz(root, qs, opts = {}) {
       foot.innerHTML = '';
       const fb = h('div', { class: 'fb ' + (ok ? 'ok' : 'no') }, h('b', {}, ok ? '정답이에요.' : '아쉬워요. 정답은 ' + (q.ans + 1) + '번.'), h('div', { lang: 'ja' }, q.expl || ''), meaningBox(q, !ok));
       foot.append(fb);
+      const sk = typeof strokeBox === 'function' ? kanjiOfQuestion(q) : [];
+      if (sk.length) fb.append(h('div', { class: 'stk-qbtns' }, sk.map(k => h('button', { class: 'btn ghost sm', onclick: () => showStrokes(k) }, `✍️ ${k.c} 획순`))));
       if (q.area === 'l' && q.script) foot.append(scriptBox(q));
       foot.append(h('div', { class: 'row' },
         q.bank ? h('button', { class: 'btn ghost sm', onclick: e => { reportBad(q); e.currentTarget.disabled = true; } }, '이상한 문제 신고') : h('span'),

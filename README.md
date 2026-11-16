@@ -192,10 +192,13 @@ supabase/functions/daily/index.ts  8단계 매일 자동 문제
 js/lookup.js                  시험 중 단어 찾기
 js/groups.js                  한자 묶음 · 문법 비교 묶음
 data/groups.json              한자 묶음 95개 · 문법 비교 21개
+js/strokes.js                 한자 획순 보기 · 따라 쓰기
+data/strokes-5.json 등        한자 획순 자료 (레벨별)
 ```
 
 **데이터 출처**
 
 - **단어 목록:** JLPT 단어 목록(Jonathan Waller의 목록 기반, open-anki-jlpt-decks)
 - **한자:** kanji-data (KANJIDIC 기반)
+- **한자 획순:** KanjiVG (Ulrich Apel, CC BY-SA 3.0, http://kanjivg.tagaini.net) — `data/strokes-*.json`은 KanjiVG를 가공한 자료로 같은 라이선스를 따라요.
 - **한국어 뜻·문법·예문:** 기존 학습 시트와 Claude가 정리

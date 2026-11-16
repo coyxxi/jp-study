@@ -160,7 +160,6 @@ async function renderToday(v) {
     sec.kanji && kgG ? ['kanji', `한자 묶음 · ${kgG.title}`, (sec.kanji.fresh ? '새 묶음' : '복습 묶음') + ` ${kgG.ids.map(id => App.byId[id]?.c).join('')}` + (sec.kanji.rev?.length ? ` + 복습 ${sec.kanji.rev.length}묶음` : ''), 'c-red', '한자', 8] : null,
     sec.gram && ggG ? ['gram', `문법 비교 · ${ggG.title}`, '비슷한 문법을 나란히 보고 골라 보기', 'c-blue', '문법', 6] : null,
     ['drill', `순간 작문 ${sec.drill.ids.length || 3}문장`, '한국어 → 일본어로 바로 말하기', 'c-amber', '회화', 6],
-    ['listen', `청해 ${sec.listen.refs.length || 2}문항`, '음성 듣고 풀기', 'c-red', '청해', 5],
   ].filter(Boolean);
   const doneCount = rows.filter(r => sec[r[0]]?.done).length;
   setCard.append(h('h2', {}, '오늘의 세트' + ((day.round || 1) > 1 ? ` · ${day.round}회차` : ''), h('span', {}, `${doneCount} / ${rows.length} 완료`)));

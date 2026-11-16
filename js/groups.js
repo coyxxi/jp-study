@@ -65,14 +65,39 @@ function groupWords(c, n = 2) {
 }
 function kanjiGroupCard(g) {
   const ks = g.ids.map(id => App.byId[id]).filter(Boolean);
-  return h('div', { class: 'kgcard' },
-    h('div', { class: 'row' }, h('div', {}, h('span', { class: 'chip ' + GROUP_CLS[g.t] }, GROUP_TYPE[g.t]), ' ', h('b', { class: 'kgtitle' }, g.title)), g.key ? h('span', { class: 'kgkey jp-serif', lang: 'ja', title: '공통 부분' }, g.key) : null),
-    h('div', { class: 'kgtip' }, '💡 ', g.tip),
-    h('div', { class: 'kggrid' }, ks.map(k => h('div', { class: 'kgk st-' + status(k.id) },
+  const grid = h('div', { class: 'kggrid' });
+  let panel = null, openC = null;
+  // 한자를 누르면 그 줄 바로 아래에 획순이 펼쳐져요 (다시 누르면 접혀요)
+  function toggle(k, tile) {
+    $$('.kgk', grid).forEach(t => t.classList.remove('sel'));
+    if (panel) { panel.remove(); panel = null; }
+    if (openC === k.c) { openC = null; return; }
+    openC = k.c; tile.classList.add('sel');
+    const tiles = $$('.kgk', grid), cols = Math.max(1, getComputedStyle(grid).gridTemplateColumns.split(' ').length);
+    const idx = tiles.indexOf(tile), last = tiles[Math.min(tiles.length - 1, Math.floor(idx / cols) * cols + cols - 1)];
+    panel = h('div', { class: 'kgpanel' },
+      h('div', { class: 'row' }, h('b', {}, h('span', { class: 'jp-serif', lang: 'ja' }, k.c), ' 획순 ', h('small', { class: 'muted' }, k.m)), h('button', { class: 'btn ghost sm', onclick: () => toggle(k, tile) }, '접기 ▲')),
+      strokeBox(k, { size: Math.min(200, window.innerWidth - 90), strip: true }),
+      h('p', { class: 'muted sm stk-credit' }, '획순 자료: KanjiVG (CC BY-SA 3.0)'));
+    last.after(panel);
+    panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  for (const k of ks) {
+    const cnt = h('b', { class: 'kcnt' });
+    const tile = h('div', { class: 'kgk st-' + status(k.id), role: 'button', tabindex: 0, title: '눌러서 획순 보기' },
+      h('span', { class: 'kghint' }, '눌러서 획순'),
       h('div', { class: 'kc jp-serif', lang: 'ja' }, k.c),
       h('div', { class: 'km' }, k.m),
-      h('div', { class: 'kr', lang: 'ja' }, [k.on && '음 ' + k.on.split('・')[0], k.kun && '훈 ' + k.kun.split('・')[0].replace(/[.-]/g, '')].filter(Boolean).join(' · ')),
-      h('div', { class: 'kw' }, groupWords(k.c).map(w => h('div', {}, h('span', { lang: 'ja' }, w.w), h('small', { lang: 'ja' }, w.r !== w.w ? ' ' + w.r : ''), h('small', {}, ' ' + w.m))))))));
+      h('div', { class: 'kr', lang: 'ja' }, [k.on && '음 ' + k.on.split('・')[0], k.kun && '훈 ' + k.kun.split('・')[0].replace(/[.-]/g, '')].filter(Boolean).join(' · '), ' · ', cnt),
+      h('div', { class: 'kw' }, groupWords(k.c).map(w => h('div', {}, h('span', { lang: 'ja' }, w.w), h('small', { lang: 'ja' }, w.r !== w.w ? ' ' + w.r : ''), h('small', {}, ' ' + w.m)))));
+    tile.addEventListener('click', e => { if (e.target.closest('.kgpanel')) return; toggle(k, tile); });
+    tile.addEventListener('keydown', e => { if (e.key === 'Enter') toggle(k, tile); });
+    strokeData(k).then(d => { if (d) cnt.textContent = d.p.length + '획'; }).catch(() => {});
+    grid.append(tile);
+  }
+  return h('div', { class: 'kgcard' },
+    h('div', { class: 'row' }, h('div', {}, h('span', { class: 'chip ' + GROUP_CLS[g.t] }, GROUP_TYPE[g.t]), ' ', h('b', { class: 'kgtitle' }, g.title)), g.key ? h('span', { class: 'kgkey jp-serif', lang: 'ja', title: '공통 부분' }, g.key) : null),
+    h('div', { class: 'kgtip' }, '💡 ', g.tip), grid);
 }
 
 /* ---------- 한자 묶음 퀴즈: 같은 묶음 안에서 고르게 해서 구별하는 힘을 길러요 ---------- */

@@ -1,5 +1,9 @@
 /* 일본어 공부방 · core: data, progress, db, AI helpers */
 'use strict';
+// 화면에 "null"·"undefined"가 글자로 찍히지 않게: 빈 값은 그냥 건너뛰어요
+for (const P of [Element.prototype, DocumentFragment.prototype]) for (const fn of ['append', 'prepend']) {
+  const orig = P[fn]; P[fn] = function (...a) { return orig.apply(this, a.filter(x => x != null && x !== false)); };
+}
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

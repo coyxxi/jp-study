@@ -658,8 +658,8 @@ function renderTalk(v, sub = 'drill') {
   v.append(pageHead('회화', '배운 문법 범위 안에서 말하는 연습을 해요', segTabs([['drill', '순간 작문'], ['role', '장면 롤플레이']], sub, k => nav('talk', k))));
   if (sub === 'role') return renderRole(v);
   const wrap = h('div', { class: 'grid2' }); v.append(wrap);
-  const box = h('section', { class: 'card' }); wrap.append(box);
-  drillRunner(box, null, () => nav('talk', 'drill'));
+  const box = h('section', { class: 'card' }); const right = h('div', {}); wrap.append(box, right);
+  drillRunner(box, null, () => nav('talk', 'drill'), null, right);
   const listCard = card('작문 문장 목록', `${App.drill.length}개`);
   const gen = App.sample ? h('button', { class: 'btn ghost sm', onclick: async e => {
     const done = busy(e.currentTarget, '만드는 중…');
@@ -675,7 +675,7 @@ function renderTalk(v, sub = 'drill') {
   listCard.append(h('p', { class: 'muted sm' }, '문장을 누르면 고치거나 지울 수 있어요.'));
   for (const d of [...App.drill].filter(d => !d.del).reverse().slice(0, 80)) listCard.append(h('div', { class: 'drow click', onclick: () => editDrill(d, () => nav('talk', 'drill')) }, h('div', {}, h('div', {}, d.ko), h('small', { lang: 'ja', class: 'muted' }, d.jp)), h('span', { class: 'chip ' + ((d.ok || 0) >= 2 ? 'c-green' : 'c-gray') }, (d.ok || 0) >= 2 ? '익힘' : fromLabel[d.from] || '')));
   if (!App.drill.length) listCard.append(h('div', { class: 'muted' }, '수업을 기록하거나 모임 메모를 저장하면 문장이 쌓여요.'));
-  wrap.append(listCard);
+  right.append(listCard);
 }
 /* 작문 문장 고치기·지우기 (지운 문장은 목록과 연습에서 빠져요) */
 function editDrill(d, after) {
@@ -741,11 +741,17 @@ ${list}`, { modelTier: 'quick' });
       } catch (err) { toast('저장하지 못했어요. 다시 시도해 주세요.', 'err'); done(); }
     } }, '체크한 것 반영')));
 }
-function drillRunner(root, ids, onDone, onExit) {
+function drillRunner(root, ids, onDone, onExit, lkHost) {
   let list = ids ? ids.map(id => App.drill.find(d => d.id === id)).filter(d => d && !d.del) : shuffle(App.drill.filter(d => (d.ok || 0) < 2 && !d.del)).slice(0, 5);
   root.innerHTML = '';
   if (!list.length) { root.append(h('div', { class: 'empty' }, '연습할 작문 문장이 없어요.', h('br'), h('span', { class: 'muted' }, '수업을 기록하거나 "AI로 5문장 추가"를 눌러 주세요.')), ...(onExit ? [h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: onDone }, '완료로 표시'))] : [])); return; }
   let i = 0;
+  // 옆에 단어 찾기 (작문하다 모르는 단어를 한국어·일본어로 바로 검색)
+  const lk = makeLookup();
+  const outer = root; root = h('div', { class: 'drillbox' });
+  if (lkHost) { lk.panel.classList.add('lk-side'); lkHost.prepend(lk.panel); outer.append(root, lk.fab); }
+  else outer.append(h('div', { class: 'qlayout with-lookup' }, root, lk.panel, lk.fab));
+  lk.bindSelection(root);
   const show = () => {
     const d = list[i]; root.innerHTML = '';
     if (onExit) root.append(h('div', { class: 'qhead' }, h('button', { class: 'x', onclick: onExit }, '✕'), h('div', { class: 'qbar' }, h('div', { style: `width:${i / list.length * 100}%` })), h('span', { class: 'qn' }, `${i + 1} / ${list.length}`)));
@@ -789,6 +795,8 @@ function renderRole(v) {
   cols.append(chatCard, side);
   const sceneCard = card('워홀 장면', '단계별 해제'); side.append(sceneCard);
   const usedCard = card('이번 대화에서 쓴 문법'); side.append(usedCard);
+  // 대화하다 모르는 단어 찾기 (상대 말을 드래그하거나 직접 검색)
+  const lk = makeLookup(); lk.panel.classList.add('lk-side'); side.append(lk.panel); v.append(lk.fab); lk.bindSelection(chatCard);
   const lv = targetLevel();
   let current = null, turns = [], fixes = [], used = {};
   // 장면을 바꾸면 session이 바뀌어서, 이전 장면의 늦게 온 답이 새 장면에 섞이지 않아요
@@ -803,6 +811,7 @@ function renderRole(v) {
   async function open(s) {
     const my = ++session; waiting = false;
     current = s; fixes = []; used = {}; turns = [];
+    side.prepend(lk.panel); // 대화 중에는 단어 찾기를 오른쪽 맨 위로
     $$('.sc', sceneCard).forEach((b, i) => b.classList.toggle('on', SCENES[i] === s));
     let saved = null;
     if (App.db) { const snap = await App.db.doc('talk/' + s.id).get().catch(() => null); if (snap?.exists) saved = JSON.parse(JSON.stringify(snap.data())); }
@@ -924,15 +933,17 @@ function renderStats(v) {
 }
 function itemDetail(it, after) {
   const p = P(it.id) || {};
-  const sel = h('select', {}, Object.entries(STATUS).map(([k, n]) => h('option', { value: k, selected: k === (p.s || 'n') }, n)));
+  const cur = p.s || 'n';
+  // 익힘은 아래 버튼으로만 (상태 목록에는 미학습·학습 중 등만)
+  const sel = h('select', {}, Object.entries(STATUS).filter(([k]) => k !== 'm').map(([k, n]) => h('option', { value: k, selected: k === (cur === 'm' ? 'l' : cur) }, n)));
   const ex = it.t === 'v' ? App.EX.filter(e => e.j.includes(it.w)).slice(0, 4) : [];
   const m = modal(h('div', {},
     h('h2', { class: 'jp-serif', lang: 'ja' }, itemLabel(it)), h('p', { class: 'muted' }, [it.r, it.on && '음 ' + it.on, it.kun && '훈 ' + it.kun].filter(Boolean).join(' · ')),
     h('div', { class: 'big' }, it.m), it.f ? h('div', { class: 'box' }, it.f) : null, it.ej ? h('div', { class: 'ex' }, jp(it.ej), h('small', {}, it.ek)) : null,
     it.n ? h('p', { class: 'muted' }, it.n) : null, ...ex.map(e => h('div', { class: 'ex' }, jp(e.j), h('small', {}, e.k))),
     h('div', { class: 'kv' }, h('span', {}, '정답 / 오답'), h('b', {}, `${p.r || 0} / ${p.w || 0}`)), h('div', { class: 'kv' }, h('span', {}, '연속 정답일'), h('b', {}, String(p.c || 0))),
-    h('div', { class: 'row' }, h('label', {}, '상태 직접 바꾸기 ', sel), h('button', { class: 'btn sm', onclick: () => { const q = ensureP(it.id); q.s = sel.value; if (sel.value === 'm') q.c = Math.max(q.c || 0, 3); markDirty('prog:' + chunkOf(it.id)); flushSaves(); m.close(); after && after(); } }, '저장'),
-      h('button', { class: 'btn ghost sm', onclick: () => TTS.speak([{ s: 'N', t: it.t === 'v' ? it.w : it.t === 'k' ? it.c : (it.ej || '') }]) }, '🔈 듣기'))));
+    h('div', { class: 'stbox' }, h('div', { class: 'stlab' }, '상태 직접 바꾸기'), h('div', { class: 'strow' }, sel, h('button', { class: 'btn sm', onclick: () => { const q = ensureP(it.id); q.s = sel.value; if (sel.value === 'n') { q.cs = 0; q.ms = 0; } q.nx = App.today; markDirty('prog:' + chunkOf(it.id)); flushSaves(); m.close(); after && after(); } }, '저장'),
+      h('button', { class: 'btn ghost sm', onclick: () => TTS.speak([{ s: 'N', t: it.t === 'v' ? it.w : it.t === 'k' ? it.c : (it.ej || '') }]) }, '🔈 듣기')))));
 }
 function weeklyChart() {
   const W = weeklyAccuracy(4);

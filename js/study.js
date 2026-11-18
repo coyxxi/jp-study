@@ -164,15 +164,15 @@ function grammarCard(g, after) {
   function fill() {
     const ex = examplesFor(g, 5);
     const nb = bankQuestions(q => (q.items || []).includes(g.id)).length;
-    body.append(g.f ? h('div', { class: 'box', lang: 'ja' }, g.f) : null,
+    body.append(...[g.f ? h('div', { class: 'box', lang: 'ja' }, g.f) : null,
       g.ej ? h('div', { class: 'ex' }, h('span', { lang: 'ja' }, g.ej), sayBtn(g.ej), h('small', {}, g.ek)) : null,
       ex.length ? h('h3', { class: 'mini' }, '내 예문에서 찾은 문장') : null,
       ...ex.map(e => h('div', { class: 'ex' }, h('span', { lang: 'ja' }, e.j), sayBtn(e.j), h('small', {}, e.k))),
       h('div', { class: 'row' },
         h('span', { class: 'muted sm' }, `이 문법 문제 ${nb}개`),
         h('div', { class: 'row tight gap' },
-          h('button', { class: 'btn ghost sm', onclick: () => { const q = ensureP(g.id); q.s = q.s === 'm' ? 'l' : 'm'; if (q.s === 'm') q.c = Math.max(q.c || 0, 3); markDirty('prog:' + chunkOf(g.id)); flushSaves(); after && after(); } }, st === 'm' ? '익힘 해제' : '익힘 표시'),
-          h('button', { class: 'btn sm', onclick: () => grammarQuiz([g.id]) }, '이 문법 문제 풀기'))));
+          h('button', { class: 'btn ghost sm', onclick: () => { setMastered(g.id, status(g.id) !== 'm'); flushSaves(); after && after(); } }, st === 'm' ? '익힘 해제' : '익힘 표시'),
+          h('button', { class: 'btn sm', onclick: () => grammarQuiz([g.id]) }, '이 문법 문제 풀기')))].filter(Boolean));
   }
   return el;
 }

@@ -229,6 +229,8 @@ ruby{ruby-position:over}rt{font-size:.5em;color:var(--muted);font-weight:400;use
 .lk-hh{display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-top:4px}.lk-hh span{color:var(--muted);font-weight:400;font-size:12px}
 .lk-hrow{display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;padding:6px 0;border-top:1px dashed var(--line);font-size:12.5px}.lk-hrow span{color:var(--muted);text-align:right}
 .lk-fab{display:none}
+body.noscroll #view .lk-fab{display:none!important}
+@media (min-width:901px){.lookup.lk-side{position:static;max-height:none;margin:0 0 16px}}
 .lk-sum{border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:16px;display:flex;flex-direction:column;gap:10px;align-items:flex-start;background:var(--card)}
 .cols-test.running{grid-template-columns:220px minmax(0,1fr)}.cols-test.running>:last-child{display:none}
 @media (max-width:1100px){.cols-test.running{grid-template-columns:1fr}.cols-test.running>:first-child{display:none}}

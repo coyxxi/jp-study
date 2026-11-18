@@ -73,11 +73,19 @@ const blobToB64 = b => new Promise((res, rej) => { const r = new FileReader(); r
 
 /* AI: Supabase Edge Function "ai"가 Gemini를 대신 호출 (API 키는 서버에만 보관) */
 function makeSample(sb) {
-  const errOf = async error => {
+  const errOf = async (error, tier) => {
     let body = null; try { body = await error.context?.json(); } catch { }
     const st = error.context?.status;
-    return { code: body?.code || (!st ? 'network' : st === 401 ? 'not_granted' : st === 429 ? 'rate_limited' : st === 503 ? 'overloaded' : st === 504 || st === 546 ? 'timeout' : 'upstream'), message: body?.error || error.message };
+    const e = { code: body?.code || (!st ? 'network' : st === 401 ? 'not_granted' : st === 429 ? 'rate_limited' : st === 503 ? 'overloaded' : st === 504 || st === 546 ? 'timeout' : 'upstream'), message: body?.error || error.message, status: st || 0, kind: error.name || '' };
+    logAIError(e, tier);
+    return e;
   };
+  // 최근 AI 오류 기록 (설정 → AI 연결에서 보여요. 원인 찾기용)
+  function logAIError(e, tier, extra) {
+    try {
+      App.aiErrors = (App.aiErrors || []).concat([{ at: new Date().toLocaleTimeString('ko-KR'), tier: tier || '', code: e?.code || '', status: e?.status || 0, kind: e?.kind || '', msg: String(e?.message || '').slice(0, 160), online: navigator.onLine, hidden: document.visibilityState === 'hidden', ...(extra || {}) }]).slice(-12);
+    } catch { }
+  }
   const RETRYABLE = new Set(['overloaded', 'timeout', 'network', 'upstream']);
   async function prepImages(opts) {
     if (!opts.images) return undefined;
@@ -94,14 +102,18 @@ function makeSample(sb) {
     if (opts.signal?.aborted) throw { code: 'cancelled' };
     const images = await prepImages(opts);
     let data, error;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    // 잠깐 끊기거나(네트워크) 서버가 붐비면(502·503·504·546) 조금 쉬었다가 두 번 더 시도해요
+    for (let attempt = 0; attempt < 3; attempt++) {
       ({ data, error } = await Promise.race([sb.functions.invoke('ai', { body: { input, json, tier: opts.modelTier || 'default', images } }), abortP(opts.signal)]));
       const st = error?.context?.status;
       const netFail = error && !st;
-      if (!(st === 503 || st === 502 || (netFail && !images)) || attempt === 1) break;
-      await wait(2500, opts.signal);
+      const retry = [502, 503, 504, 546].includes(st) || (netFail && (!images || attempt === 0));
+      if (!retry || attempt === 2) break;
+      logAIError({ code: netFail ? 'network' : 'http', status: st || 0, message: '자동 재시도 ' + (attempt + 1) }, opts.modelTier);
+      if (!navigator.onLine) await new Promise(r => { const on = () => { removeEventListener('online', on); r(); }; addEventListener('online', on); setTimeout(on, 8000); });
+      await wait(attempt === 0 ? 1500 : 4000, opts.signal);
     }
-    if (error) throw await errOf(error);
+    if (error) throw await errOf(error, opts.modelTier);
     if (data?.error) throw { code: data.code || 'upstream', message: data.error, text: data.text };
     return { text: data?.text || '', model: data?.model, primary: data?.primary, skipped: data?.skipped };
   }
@@ -110,7 +122,7 @@ function makeSample(sb) {
   async function submit(input, opts = {}, json = false) {
     const images = opts._images || await prepImages(opts);
     const { data, error } = await Promise.race([sb.functions.invoke('ai', { body: { input, json, tier: opts.modelTier || 'default', images, async: true, kind: opts.kind || '' } }), abortP(opts.signal)]);
-    if (error) throw await errOf(error);
+    if (error) throw await errOf(error, opts.modelTier);
     if (data?.error) throw { code: data.code || 'upstream', message: data.error };
     if (!data?.jobId) throw { code: 'upstream', message: '작업 번호를 받지 못했어요' };
     return data.jobId;
@@ -124,7 +136,7 @@ function makeSample(sb) {
       const d = snap.exists ? snap.data() : null;
       opts.onWait && opts.onWait(Date.now() - startedAt, d);
       if (d && d.status === 'done') { App.db.doc('jobs/' + jobId).delete().catch(() => {}); return { text: d.text || '', model: d.model, primary: d.primary, skipped: d.skipped }; }
-      if (d && d.status === 'error') { App.db.doc('jobs/' + jobId).delete().catch(() => {}); throw { code: d.code || 'upstream', message: d.error || '', text: d.text }; }
+      if (d && d.status === 'error') { App.db.doc('jobs/' + jobId).delete().catch(() => {}); const e = { code: d.code || 'upstream', message: d.error || '', text: d.text }; logAIError(e, opts.modelTier || d.tier, { job: 1 }); throw e; }
       // 서버가 강제로 끝나 결과를 못 남긴 경우 (약 3분)
       const age = Date.now() - (d?.at || startedAt);
       if (age > 190000) { App.db.doc('jobs/' + jobId).delete().catch(() => {}); throw { code: 'timeout', message: '작업이 끝나지 않았어요' }; }
@@ -161,6 +173,12 @@ function makeSample(sb) {
   sample.submitJSON = (input, opts = {}) => submit(input, opts, true);
   sample.waitJSON = async (jobId, opts = {}) => { const r = await waitJob(jobId, opts); App.lastAI = { at: Date.now(), model: r.model, primary: r.primary, skipped: r.skipped, text: r.text.slice(0, 4000) }; return toJSON(r.text); };
   sample.limits = async () => ({ images: { maxCount: 6 } });
+  // AI 함수가 살아 있는지, 최신 버전인지 확인 (설정 → AI 연결 테스트)
+  sample.health = async () => {
+    const { data, error } = await sb.functions.invoke('ai', { method: 'GET' });
+    if (error) { let body = null; try { body = await error.context?.json(); } catch { } return { ok: false, status: error.context?.status || 0, code: body?.code || '', message: body?.error || error.message }; }
+    return Object.assign({ ok: true }, data);
+  };
   return sample;
 }
 function parseLooseJSON(t) {

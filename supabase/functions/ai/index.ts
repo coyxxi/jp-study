@@ -15,7 +15,7 @@ const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
 // 작업별 모델: 첫 번째가 붐비면 다음 모델로 넘어가요
 const TIERS: Record<string, { models: string[]; thinking?: string }> = {
-  default: { models: [Deno.env.get("GEMINI_MODEL") ?? "gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite"] },
+  default: { models: [Deno.env.get("GEMINI_MODEL") ?? "gemini-3.8-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite"], thinking: "medium" }, // 생각을 너무 길게 하면 시간 초과가 나서 중간으로
   vision: { models: [Deno.env.get("GEMINI_MODEL_VISION") ?? "gemini-3.6-flash", "gemini-3.8-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite"], thinking: "low" },
   quick: { models: [Deno.env.get("GEMINI_MODEL_QUICK") ?? "gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash"], thinking: "low" },
 };
@@ -23,7 +23,7 @@ const TIERS: Record<string, { models: string[]; thinking?: string }> = {
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 const reply = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
@@ -83,8 +83,14 @@ async function runModels(contents: Any[], json: boolean, tierName: string, budge
   return { status: lastCode === "rate_limited" ? 429 : lastCode === "timeout" ? 504 : 503, body: { error: lastErr, code: lastCode } };
 }
 
+// 어떤 오류가 나도 CORS 헤더가 붙은 답을 돌려줘요. (헤더 없이 죽으면 브라우저에는 "연결 끊김"으로만 보여서 원인을 알 수 없어요)
 Deno.serve(async (req) => {
+  try { return await handle(req); }
+  catch (e) { return reply({ error: "server error: " + String((e as Error)?.message ?? e).slice(0, 200), code: "upstream" }, 500); }
+});
+async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  if (req.method === "GET") return reply({ ok: true, version: "2026-11-17", key: !!KEY });
   if (!KEY) return reply({ error: "GEMINI_API_KEY is not set", code: "no_key" }, 500);
 
   let payload: { input: string | Turn[]; json?: boolean; tier?: string; images?: { mime: string; data: string }[]; async?: boolean; kind?: string };
@@ -129,4 +135,4 @@ Deno.serve(async (req) => {
   const rt = (globalThis as any).EdgeRuntime;
   if (rt?.waitUntil) rt.waitUntil(work); else await work;
   return reply({ jobId });
-});
+}

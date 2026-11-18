@@ -287,35 +287,57 @@ function setStatus(id, s) {
   if (s === 'a' && p.s !== 'n') return; // never downgrade
   p.s = s; markDirty('prog:' + chunkOf(id));
 }
-function recordAnswer(ids, ok, area, qref) {
-  const t = App.today;
+/* 익힘 규칙
+   - 서로 다른 시험(2시간 이상 떨어진 시험)에서 3번 연속 맞히면 익힘 (아침·점심·저녁 세 번이면 그날 익힘)
+   - 익힘 뒤에는 3일 → 7일 → 15일 → 30일 뒤에 확인 문제가 나오고, 틀리면 다시 "학습 중"
+   - 같은 시험 안에서 다시 맞힌 건 세지 않아요 */
+const SESSION_GAP = 2 * 3600e3;
+const M_INTERVALS = [3, 7, 15, 30];
+function recordAnswer(ids, ok, area, qref, sub) {
+  const t = App.today, now = Date.now();
   ids = [...new Set((ids || []).map(canon))];
   for (const id of ids) {
     if (!App.byId[id]) continue;
     const p = ensureP(id);
+    const newSession = !p.ls || now - p.ls >= SESSION_GAP;
     if (ok) {
       p.r = (p.r || 0) + 1;
       if (p.d !== t) { p.c = (p.c || 0) + 1; p.d = t; }
-      const hist = ((p.h || '') + 'o').slice(-6);
-      // 익힘: 서로 다른 날 3번 연속 정답, 또는 최근 4번 연속 정답
-      const mastered = p.c >= 3 || /oooo$/.test(hist);
-      p.s = mastered ? 'm' : 'l';
-      p.nx = addDays(t, INTERVALS[Math.min(mastered ? Math.max(p.c, 3) : p.c, INTERVALS.length - 1)]);
+      if (newSession) { p.cs = (p.cs || 0) + 1; p.ls = now; }
+      if (p.s === 'm') {
+        // 확인 문제를 맞히면 다음 확인까지 간격을 늘려요
+        if (newSession && (!p.nx || p.nx <= t)) { p.ms = Math.min((p.ms || 0) + 1, M_INTERVALS.length - 1); p.nx = addDays(t, M_INTERVALS[p.ms]); }
+      } else if ((p.cs || 0) >= 3) {
+        p.s = 'm'; p.ms = 0; p.md = t; p.nx = addDays(t, M_INTERVALS[0]);
+      } else {
+        p.s = 'l'; p.nx = addDays(t, 1);
+      }
     } else {
-      p.w = (p.w || 0) + 1; p.c = 0; p.s = 'l'; p.nx = addDays(t, 1); p.lw = t;
+      p.w = (p.w || 0) + 1; p.c = 0; p.cs = 0; p.ms = 0; p.ls = now; p.s = 'l'; p.nx = addDays(t, 1); p.lw = t;
     }
     p.h = ((p.h || '') + (ok ? 'o' : 'x')).slice(-6);
-    p.qa = Date.now(); // 마지막으로 문제에 나온 때 (골고루 내기용)
+    p.qa = now; // 마지막으로 문제에 나온 때 (골고루 내기용)
     markDirty('prog:' + chunkOf(id));
   }
   const mon = t.slice(0, 7);
   App.logs[mon] = App.logs[mon] || {};
-  (App.logs[mon][t] = App.logs[mon][t] || []).push([area || 'v', ok ? 1 : 0, (ids || []).join(',')]);
+  const row = [area || 'v', ok ? 1 : 0, (ids || []).join(',')]; if (sub) row.push(String(sub).slice(0, 20));
+  (App.logs[mon][t] = App.logs[mon][t] || []).push(row);
   markDirty('log:' + mon);
   if (!ok && qref) {
     App.wrong.push({ at: t, area, ids, q: qref });
     markDirty('wrong');
   }
+}
+
+/* 외울 단어 풀: 학원에서 배움·학습 중인 단어 (익힘은 빼요. 익힘은 확인할 날이 되면 복습으로 나와요) */
+function learnVocab() { return allVocab().filter(v => ['a', 'l'].includes(status(v.id))).map(v => v.id); }
+/* 단어장에서 직접 익힘으로 바꾸기 / 되돌리기 */
+function setMastered(id, on) {
+  const p = ensureP(id);
+  if (on) { p.s = 'm'; p.md = App.today; p.cs = Math.max(p.cs || 0, 3); p.ms = 1; p.nx = addDays(App.today, M_INTERVALS[1]); }
+  else { p.s = 'l'; p.cs = 0; p.ms = 0; p.nx = App.today; }
+  markDirty('prog:' + chunkOf(canon(id)));
 }
 
 /* ---------- stats ---------- */
@@ -392,7 +414,7 @@ function aiErrorText(e) {
   const c = e?.code;
   if (c === 'not_granted') return 'AI 연결이 설정되지 않았거나 로그인이 만료됐어요.';
   if (c === 'no_key') return 'Supabase에 GEMINI_API_KEY가 설정되지 않았어요. 설치 안내서 4단계를 확인해 주세요.';
-  if (c === 'network') return '연결이 끊겨서 AI 답을 받지 못했어요. 정리하는 동안 화면을 켜 둔 채 이 페이지에서 기다려 주세요. 사진이 많으면 2~3장씩 나눠서 해 보세요.';
+  if (c === 'network') return '연결이 잠깐 끊겨서 AI 답을 받지 못했어요 (자동으로 3번 시도했어요). 다시 눌러 주세요. 계속 이러면 설정 → AI 연결 테스트를 눌러 보세요.';
   if (c === 'timeout') return 'AI 답이 너무 오래 걸려 중간에 멈췄어요. 사진을 2~3장씩 나눠서 다시 해 보세요.';
   if (c === 'overloaded') return '지금 AI 서버에 사용자가 몰려서 모든 모델이 바빠요. 1~2분 뒤 다시 눌러 주세요.';
   if (c === 'upstream') return 'AI 서버가 응답하지 않았어요. 잠시 후 다시 시도해 주세요. (' + (e?.message || '').slice(0, 80) + ')';
@@ -467,7 +489,7 @@ function scheduleBankSave() {
         for (const q of local.qs || []) {
           if (same(q, baseQ[q.id])) continue;
           const rq = (cur.qs || []).find(x => x.id === q.id);
-          if (rq) { for (const f of ['seen', 'ok', 'bad', 'ko', 'cko']) if (q[f] !== undefined) rq[f] = q[f]; } else (cur.qs = cur.qs || []).push(q);
+          if (rq) { for (const f of ['seen', 'ok', 'bad', 'ko', 'cko', 'chk', 'fixed', 'prompt', 'choices', 'ans', 'expl']) if (q[f] !== undefined) rq[f] = q[f]; } else (cur.qs = cur.qs || []).push(q);
         }
         return cur;
       }).then(m => { if (m) App.base.banks[b.id] = clone(m); }).catch(() => { b._dirty = true; });
@@ -607,7 +629,11 @@ ${itemsForPrompt(shuffle(ids).slice(0, 14))}
 만들 문제 (총 ${n}개): ${Object.entries(b).map(([k, v]) => `${k} ${v}개`).join(', ')}
 각 문제의 items에는 위 목록의 id 중 실제로 묻는 항목을 넣으세요.
 ${qSpec(level)}`;
-    try { const arr = await aiJSON(prompt, { signal, modelTier: 'default', async: true, kind: 'questions' }); return validateQs(arr, null); }
+    try {
+      const arr = validateQs(await aiJSON(prompt, { signal, modelTier: 'default', async: true, kind: 'questions' }), null);
+      // 만든 문제를 한 번 더 검수해서, 정답을 넣으면 문장이 틀어지는 문제 등을 고치거나 빼요
+      try { return await verifyQs(arr, level, signal); } catch (e) { if (e?.code === 'cancelled') throw e; return arr; }
+    }
     catch (e) { if (e?.code === 'cancelled' || e?.code === 'not_granted' || e?.code === 'no_key') throw e; console.warn('batch failed', e); App.lastAIError = e; return []; }
     finally { done++; BG.set(`문제 만드는 중… ${done}/${total}`); onProgress && onProgress(done, total); }
   };
@@ -621,6 +647,67 @@ ${qSpec(level)}`;
   await writeDoc('qbank/' + bank.id, bank);
   App.base.banks[bank.id] = clone(bank);
   return bank;
+}
+
+/* ---------- 문제 검수: 정답을 빈칸에 넣으면 완전한 문장이 되는지, 정답이 하나뿐인지, 해설이 맞는지 ---------- */
+async function verifyQs(qs, level = 5, signal) {
+  if (!qs.length || !App.sample) return qs;
+  const out = [];
+  for (let b = 0; b < qs.length; b += 8) {
+    const chunk = qs.slice(b, b + 8);
+    const list = chunk.map((q, i) => JSON.stringify({ i, type: q.sub, area: q.area, passage: q.passage ? plainJa(q.passage).slice(0, 500) : undefined, script: q.script ? q.script.map(l => l.s + ': ' + plainJa(l.t)).join(' / ').slice(0, 500) : undefined, prompt: plainJa(q.prompt), choices: q.choices.map(plainJa), ans: q.ans, expl: q.expl })).join('\n');
+    const res = await aiJSON(`당신은 JLPT N${level} 문제 검수자입니다. 아래 문제를 하나씩 엄격하게 확인하세요.
+확인할 것:
+1) 정답 보기(ans는 0부터 시작하는 번호)를 빈칸에 넣으면 문법적으로 완전하고 자연스러운 문장이 되는가 (예: 「写真を（　）でください」에 「撮ら」를 넣으면 「撮らでください」로 틀림 → 빈칸 뒤가 「ないでください」여야 함)
+2) 정답이 정확히 하나뿐인가 (다른 보기도 정답이 될 수 있으면 문제)
+3) 해설(expl)이 실제 정답과 맞는가
+4) 文の組み立て(★)는 네 조각을 바른 순서로 놓을 수 있고 ★ 위치의 답이 맞는가
+문제가 없으면 {"i":번호,"ok":true}.
+문제가 있으면 최소한으로 고친 문제를 주세요: {"i":번호,"ok":false,"why":"한국어로 짧게","fix":{"prompt":"고친 문제 문장","choices":["","","",""],"ans":0,"expl":"한국어 해설"}} (바꾼 필드만 넣어도 됨).
+고칠 수 없으면 {"i":번호,"ok":false,"drop":true,"why":"..."}.
+JSON 배열만 답하세요.
+${list}`, { signal, modelTier: 'default', async: true, kind: 'verify' });
+    const by = {}; for (const r of Array.isArray(res) ? res : []) if (r && r.i != null) by[+r.i] = r;
+    chunk.forEach((q, i) => {
+      const r = by[i];
+      if (!r || r.ok) { out.push(Object.assign(q, { chk: 1 })); return; }
+      if (r.drop || !r.fix) { if (r.drop) return; out.push(Object.assign(q, { chk: 1 })); return; }
+      const fixed = applyQFix(q, r.fix);
+      if (fixed) out.push(Object.assign(fixed, { chk: 1, fixed: String(r.why || '').slice(0, 100) }));
+    });
+  }
+  return out;
+}
+/* 검수 결과의 수정 내용을 원래 문제에 적용 (형식이 맞지 않으면 null) */
+function applyQFix(q, fix) {
+  const n = Object.assign({}, q);
+  if (fix.prompt) n.prompt = fixFuri(String(fix.prompt).slice(0, 600));
+  if (Array.isArray(fix.choices)) { if (fix.choices.length !== 4) return null; n.choices = fix.choices.map(c => fixFuri(String(c).slice(0, 160))); }
+  if (fix.ans != null) { const a = Number(fix.ans); if (!(a >= 0 && a <= 3)) return null; n.ans = a; }
+  if (fix.expl) n.expl = String(fix.expl).slice(0, 300);
+  if (fix.prompt || fix.choices) { delete n.ko; delete n.cko; } // 문장이 바뀌면 뜻 풀이는 다시 받아요
+  return n;
+}
+/* 문제 은행 검수: 아직 검수하지 않은 문제를 8개씩 확인해서 고치거나 빼요 */
+async function checkBank({ onProgress, all = false } = {}) {
+  const targets = [];
+  for (const b of App.banks) for (const q of b.qs || []) if (!q.bad && (all || !q.chk)) targets.push([b, q]);
+  let fixed = 0, dropped = 0, done = 0;
+  for (let i = 0; i < targets.length; i += 8) {
+    const part = targets.slice(i, i + 8);
+    const lv = part[0][0].level || targetLevel();
+    let res;
+    try { res = await verifyQs(part.map(([, q]) => clone(q)), lv); } catch (e) { if (done === 0) throw e; break; }
+    const keep = new Map(res.map(q => [q.id, q]));
+    for (const [b, q] of part) {
+      const r = keep.get(q.id);
+      if (!r) { q.bad = true; dropped++; }
+      else { if (r.fixed) { Object.assign(q, { prompt: r.prompt, choices: r.choices, ans: r.ans, expl: r.expl, fixed: r.fixed }); delete q.ko; delete q.cko; fixed++; } q.chk = 1; }
+      b._dirty = true;
+    }
+    done += part.length; scheduleBankSave(); onProgress && onProgress(done, targets.length, fixed, dropped);
+  }
+  return { total: targets.length, checked: done, fixed, dropped };
 }
 
 /* ---------- rule-based vocab questions ---------- */

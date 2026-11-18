@@ -83,6 +83,22 @@ function kanjiOfQuestion(q) {
   }
   return [...new Set(out)].slice(0, 3);
 }
+/* 틀린 문제의 다시 풀기: 단어·한자·문법 항목이면 다른 유형으로, 아니면 보기 순서를 바꿔서 */
+function retryOf(q) {
+  if (q.area === 'l') return null; // 청해는 다시 듣기로 충분해요
+  let r = null;
+  if (q.rule && q.items?.[0] && App.byId[q.items[0]]) {
+    const it = App.byId[q.items[0]];
+    const last = String(q.id).slice(-1);
+    const modes = it.t === 'v' ? (/[一-龯]/.test(it.w) ? ['read', 'mean', 'write', 'ko'] : ['mean', 'ko']).filter(m => m[0].toUpperCase() !== last) : [null];
+    r = ruleQ(it.id, modes[Math.random() * modes.length | 0]);
+  }
+  if (!r) {
+    const order = shuffle([0, 1, 2, 3]);
+    r = Object.assign({}, q, { choices: order.map(j => q.choices[j]), ans: order.indexOf(q.ans) });
+  }
+  return Object.assign(r, { id: q.id + '~r', retry: true, retryOf: q.id, bank: undefined });
+}
 function runQuiz(root, qs, opts = {}) {
   const mode = opts.mode || 'practice';
   qs = qs.filter(Boolean);
@@ -117,7 +133,7 @@ function runQuiz(root, qs, opts = {}) {
       const fg = h('button', { class: 'fg' + (furiOn() ? ' on' : ''), title: '한자 위 히라가나 켜기/끄기', onclick: () => { App.state.furigana = !furiOn(); saveState(); layout.classList.toggle('no-furi', !furiOn()); fg.classList.toggle('on', furiOn()); fg.textContent = furiOn() ? 'ふりがな 켜짐' : 'ふりがな 꺼짐'; } }, furiOn() ? 'ふりがな 켜짐' : 'ふりがな 꺼짐');
       head.append(fg);
     }
-    const chips = h('div', { class: 'qchips' }, h('span', { class: 'chip ' + (q.area === 'l' ? 'c-red' : q.area === 'g' ? 'c-blue' : q.area === 'r' ? 'c-amber' : 'c-green') }, AREA[q.area] || ''), q.sub ? h('span', { class: 'chip c-gray', lang: 'ja' }, q.sub) : null);
+    const chips = h('div', { class: 'qchips' }, h('span', { class: 'chip ' + (q.area === 'l' ? 'c-red' : q.area === 'g' ? 'c-blue' : q.area === 'r' ? 'c-amber' : 'c-green') }, AREA[q.area] || ''), q.sub ? h('span', { class: 'chip c-gray', lang: 'ja' }, q.sub) : null, q.retry ? h('span', { class: 'chip c-amber' }, '↻ 다시') : null);
     box.append(head, chips);
     const auto = !q.rule; // 단어 퀴즈(읽기·표기)는 후리가나가 정답을 알려 주므로 제외
     const autoChoices = auto && !/漢字読み|表記|読み方|漢字/.test(q.sub || '');
@@ -150,16 +166,33 @@ function runQuiz(root, qs, opts = {}) {
       if (mode === 'exam') { res[i] = { pick: k }; $$('.opt', list).forEach((b, j) => b.classList.toggle('sel', j === k)); return; }
       if (res[i]) return;
       const ok = k === q.ans; res[i] = { pick: k, ok };
-      recordAnswer(q.items, ok, q.area, ok ? null : qRef(q)); markSeen(q, ok); noteMode(q);
+      if (!q.retry) {
+        recordAnswer(q.items, ok, q.area, ok ? null : qRef(q), q.sub); markSeen(q, ok); noteMode(q);
+        // 틀린 문제는 이 시험 끝에 다른 형태로 한 번 더 (정답률에는 처음 답만 들어가요)
+        if (!ok && opts.requeue !== false && !qs.some(x => x.retryOf === q.id)) { const rq = retryOf(q); if (rq) qs.push(rq); }
+      }
       $$('.opt', list).forEach((b, j) => { b.disabled = true; if (j === q.ans) b.classList.add('right'); else if (j === k) b.classList.add('wrong'); });
       foot.innerHTML = '';
-      const fb = h('div', { class: 'fb ' + (ok ? 'ok' : 'no') }, h('b', {}, ok ? '정답이에요.' : '아쉬워요. 정답은 ' + (q.ans + 1) + '번.'), h('div', { lang: 'ja' }, q.expl || ''), meaningBox(q, !ok));
+      const fb = h('div', { class: 'fb ' + (ok ? 'ok' : 'no') }, h('b', {}, ok ? '정답이에요.' : '아쉬워요. 정답은 ' + (q.ans + 1) + '번.'), q.retry ? h('div', { class: 'muted sm' }, '다시 풀기예요. 정답률·진도에는 처음 답만 들어가요.') : null, !q.retry && !ok && opts.requeue !== false ? h('div', { class: 'muted sm' }, '이 문제는 시험 끝에 한 번 더 나와요.') : null, h('div', { lang: 'ja' }, q.expl || ''), meaningBox(q, !ok));
       foot.append(fb);
       const sk = typeof strokeBox === 'function' ? kanjiOfQuestion(q) : [];
       if (sk.length) fb.append(h('div', { class: 'stk-qbtns' }, sk.map(k => h('button', { class: 'btn ghost sm', onclick: () => showStrokes(k) }, `✍️ ${k.c} 획순`))));
       if (q.area === 'l' && q.script) foot.append(scriptBox(q));
       foot.append(h('div', { class: 'row' },
-        q.bank ? h('button', { class: 'btn ghost sm', onclick: e => { reportBad(q); e.currentTarget.disabled = true; } }, '이상한 문제 신고') : h('span'),
+        q.bank ? h('div', { class: 'row tight gap' },
+          h('button', { class: 'btn ghost sm', title: 'AI가 이 문제를 다시 확인하고, 틀렸으면 고쳐서 문제 은행에 저장해요', onclick: async e => {
+            const btn = e.currentTarget; const done = busy(btn, '검토 중…');
+            try {
+              const [r] = await verifyQs([clone(q)], targetLevel());
+              const b = App.banks.find(x => x.id === q.bank), bq = b?.qs.find(x => x.id === q.id);
+              if (!r) { reportBad(q); btn.textContent = '문제를 은행에서 뺐어요'; return; }
+              if (bq) { Object.assign(bq, { prompt: r.prompt, choices: r.choices, ans: r.ans, expl: r.expl, chk: 1 }); if (r.fixed) { bq.fixed = r.fixed; delete bq.ko; delete bq.cko; } b._dirty = true; scheduleBankSave(); }
+              if (r.fixed) { foot.append(h('div', { class: 'fb' }, h('b', {}, '이렇게 고쳤어요: ' + r.fixed), h('div', { class: 'qprompt sm', lang: 'ja', html: fmtPrompt(r.prompt) }), h('ol', { class: 'mean-c' }, r.choices.map((c, j) => h('li', { class: j === r.ans ? 'ok' : '' }, plainJa(c)))), h('div', { class: 'sm' }, r.expl))); btn.textContent = '고쳐서 저장했어요'; }
+              else btn.textContent = '문제 없어요';
+              btn.disabled = true;
+            } catch (err) { toast(aiErrorText(err), 'err'); done(); }
+          } }, '🔍 AI로 문제 검토'),
+          h('button', { class: 'btn ghost sm', onclick: e => { reportBad(q); e.currentTarget.disabled = true; } }, '이상한 문제 신고')) : h('span'),
         h('button', { class: 'btn', onclick: next }, i === qs.length - 1 ? '결과 보기' : '다음 →')));
       fb.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
@@ -167,15 +200,18 @@ function runQuiz(root, qs, opts = {}) {
   function next() { if (i < qs.length - 1) { i++; show(); } else finish(); }
   function finish() {
     TTS.stop(); clearInterval(timerId);
-    if (mode === 'exam') qs.forEach((q, k) => { const r = res[k] || { pick: -1 }; r.ok = r.pick === q.ans; res[k] = r; recordAnswer(q.items, r.ok, q.area, r.ok ? null : qRef(q)); markSeen(q, r.ok); noteMode(q); });
+    if (mode === 'exam') qs.forEach((q, k) => { const r = res[k] || { pick: -1 }; r.ok = r.pick === q.ans; res[k] = r; recordAnswer(q.items, r.ok, q.area, r.ok ? null : qRef(q), q.sub); markSeen(q, r.ok); noteMode(q); });
     const by = {};
-    qs.forEach((q, k) => { const a = by[q.area] = by[q.area] || [0, 0]; a[1]++; if (res[k]?.ok) a[0]++; });
-    const right = res.filter(r => r?.ok).length;
+    const main = qs.map((q, k) => k).filter(k => !qs[k].retry); // 점수는 처음 푼 답만
+    main.forEach(k => { const q = qs[k]; const a = by[q.area] = by[q.area] || [0, 0]; a[1]++; if (res[k]?.ok) a[0]++; });
+    const right = main.filter(k => res[k]?.ok).length, totalN = main.length || 1;
+    const fixedN = qs.filter((q, k) => q.retry && res[k]?.ok).length;
     box.innerHTML = '';
     box.append(h('div', { class: 'result' },
-      h('div', { class: 'score' }, h('b', {}, `${right} / ${qs.length}`), h('span', {}, `${Math.round(right / qs.length * 100)}%`)),
+      h('div', { class: 'score' }, h('b', {}, `${right} / ${main.length}`), h('span', {}, `${Math.round(right / totalN * 100)}%`)),
+      fixedN ? h('p', { class: 'muted sm' }, `틀린 문제 중 ${fixedN}개는 다시 풀기에서 맞혔어요.`) : null,
       h('div', { class: 'areas' }, Object.entries(by).map(([a, [o, n]]) => h('div', {}, h('span', {}, AREA[a]), h('div', { class: 'tr' }, h('div', { style: `width:${o / n * 100}%` })), h('b', {}, `${o}/${n}`))))));
-    const wrongs = qs.map((q, k) => [q, res[k]]).filter(([, r]) => !r?.ok);
+    const wrongs = qs.map((q, k) => [q, res[k]]).filter(([q, r]) => !q.retry && !r?.ok);
     if (wrongs.length) {
       box.append(h('h3', { class: 'sub' }, '틀린 문제 다시 보기'));
       for (const [q, r] of wrongs) box.append(h('div', { class: 'wrongcard' },

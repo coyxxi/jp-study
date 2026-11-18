@@ -170,7 +170,7 @@ function grammarGroupQuestions(gg) {
 /* ---------- 결과 반영: 묶음별 정답률로 다음 복습일 ---------- */
 function gradeFromResults(res, qs) {
   const acc = {};
-  qs.forEach((q, i) => { const key = q.kg ? 'k|' + q.kg : q.gg ? 'g|' + q.gg : null; if (!key) return; const a = acc[key] = acc[key] || [0, 0]; a[1]++; if (res[i]?.ok) a[0]++; });
+  qs.forEach((q, i) => { if (q.retry) return; const key = q.kg ? 'k|' + q.kg : q.gg ? 'g|' + q.gg : null; if (!key) return; const a = acc[key] = acc[key] || [0, 0]; a[1]++; if (res[i]?.ok) a[0]++; });
   for (const [key, [ok, n]] of Object.entries(acc)) { const [kind, id] = key.split('|'); gradeGroup(kind, id, ok, n); }
 }
 

@@ -62,9 +62,12 @@ function studyVocab(v) {
       const ids = rows.map(r => r.id);
       info.append(h('span', { class: 'muted' }, `${rows.length}개`),
         h('div', { class: 'row tight gap' },
-          h('button', { class: 'btn sm', disabled: !rows.length, onclick: () => { const o = overlay('단어 카드'); flashcards(o.body, priority(ids).slice(0, 30), { onExit: o.close, onDone: () => { o.close(); nav('study', 'vocab'); } }); } }, '카드로 외우기'),
-          h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => { const o = overlay('단어 카드 · 뜻 보고 떠올리기'); flashcards(o.body, priority(ids).slice(0, 30), { front: 'ko', onExit: o.close, onDone: () => { o.close(); nav('study', 'vocab'); } }); } }, '뜻 → 일본어'),
-          h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => { const o = overlay('단어 퀴즈'); runQuiz(o.body, priority(ids).slice(0, 15).map(id => ruleQ(id)), { onExit: o.close, onDone: () => { o.close(); nav('study', 'vocab'); } }); } }, '퀴즈 15문항')));
+          h('button', { class: 'btn sm', disabled: !rows.length, onclick: () => { const o = overlay('단어 카드'); flashcards(o.body, priority(ids.filter(id => status(id) !== 'm')).slice(0, 30), { onExit: o.close, onDone: () => { o.close(); nav('study', 'vocab'); } }); } }, '카드로 외우기'),
+          h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => {
+            // 익힘은 빼고 (확인할 날이 된 것만 포함) 골고루
+            const pool = ids.filter(id => status(id) !== 'm' || (P(id)?.nx || '') <= App.today);
+            const o = overlay('단어 퀴즈'); runQuiz(o.body, priority(pool.length ? pool : ids).slice(0, 15).map(id => ruleQ(id)), { onExit: o.close, onDone: () => { o.close(); nav('study', 'vocab'); } });
+          } }, '퀴즈 15문항')));
       if (!rows.length) grid.append(h('div', { class: 'empty sm' }, '조건에 맞는 단어가 없어요.'));
     }
     for (const it of rows.slice(page * 60, page * 60 + 60)) {
@@ -73,7 +76,9 @@ function studyVocab(v) {
         h('div', { class: 'wtop' }, h('span', { class: 'ww', lang: 'ja' }, it.w), sayBtn(it.w)),
         it.r && it.r !== it.w ? h('div', { class: 'wr', lang: 'ja' }, it.r) : null,
         h('div', { class: 'wm' }, it.m),
-        h('div', { class: 'wb' }, h('span', { class: 'chip ' + STATUS_CLS[st] }, STATUS[st]), h('span', { class: 'muted sm' }, it.l ? 'N' + it.l : ''))));
+        h('div', { class: 'wb' }, h('span', { class: 'chip ' + STATUS_CLS[st] }, STATUS[st]), h('span', { class: 'muted sm' }, it.l ? 'N' + it.l : ''),
+          // 이미 아는 단어는 바로 익힘으로 → 퀴즈·오늘 세트에서 빠지고, 7일 뒤 한 번만 확인 문제로 나와요
+          h('span', { class: 'mtoggle' + (st === 'm' ? ' on' : ''), role: 'button', title: st === 'm' ? '익힘 해제 (다시 외울 단어로)' : '아는 단어 → 익힘으로', onclick: e => { e.stopPropagation(); setMastered(it.id, st !== 'm'); flushSaves(); toast(st === 'm' ? `${it.w} 익힘을 해제했어요.` : `${it.w}을(를) 익힘으로 바꿨어요. 퀴즈에서 빠져요.`); draw(true); } }, st === 'm' ? '✓ 익힘' : '익힘으로'))));
     }
     more.hidden = (page + 1) * 60 >= rows.length;
   }
@@ -228,7 +233,9 @@ function flashcards(root, ids, opts = {}) {
     root.innerHTML = ''; flipped = false;
     const it = list[i];
     root.append(h('div', { class: 'qhead' }, opts.onExit ? h('button', { class: 'x', onclick: () => { document.removeEventListener('keydown', onKey); opts.onExit(); } }, '✕') : null,
-      h('div', { class: 'qbar' }, h('div', { style: `width:${i / list.length * 100}%` })), h('span', { class: 'qn' }, `${i + 1} / ${list.length}`)));
+      h('div', { class: 'qbar' }, h('div', { style: `width:${i / list.length * 100}%` })), h('span', { class: 'qn' }, `${i + 1} / ${list.length}`),
+      // 카드 방향 바꾸기: 일본어 → 뜻 / 뜻 → 일본어 (한자 카드는 그대로)
+      it.t !== 'k' ? h('button', { class: 'fg on', title: '카드 앞면 바꾸기', onclick: () => { opts.front = opts.front === 'ko' ? '' : 'ko'; show(); } }, opts.front === 'ko' ? '뜻 → 일본어' : '일본어 → 뜻') : null));
     const st = status(it.id);
     const cardEl = h('button', { class: 'fcard', onclick: flip }, h('span', { class: 'chip ' + STATUS_CLS[st] + ' fc-st' }, STATUS[st]), front(it), h('div', { class: 'fc-hint muted sm' }, '눌러서 뒤집기 · Space'));
     root.append(cardEl, h('div', { class: 'fc-actions', hidden: true },

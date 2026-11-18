@@ -651,6 +651,7 @@ ${qSpec(level)}`;
 
 /* ---------- 문제 검수: 정답을 빈칸에 넣으면 완전한 문장이 되는지, 정답이 하나뿐인지, 해설이 맞는지 ---------- */
 async function verifyQs(qs, level = 5, signal) {
+  qs.forEach(ruleFixQ);
   if (!qs.length || !App.sample) return qs;
   const out = [];
   for (let b = 0; b < qs.length; b += 8) {
@@ -688,10 +689,29 @@ function applyQFix(q, fix) {
   if (fix.prompt || fix.choices) { delete n.ko; delete n.cko; } // 문장이 바뀌면 뜻 풀이는 다시 받아요
   return n;
 }
+/* 규칙으로 바로 고치는 흔한 오류: 「（　）でください」에 ない형 어간(撮ら 등)이 정답이면 빈칸 뒤에 ない가 빠진 것 */
+const BLANK_NAIDE = /([（(][\s　_＿]*[）)])(\s*)(でください|で下さい|でほしい|でくれ|でね)/;
+function ruleFixQ(q) {
+  if (!q || !q.prompt || !Array.isArray(q.choices) || q.ans == null) return false;
+  const m = String(q.prompt).match(BLANK_NAIDE); if (!m) return false;
+  const a = plainJa(q.choices[q.ans]).trim(); if (!a || /(ない|ず|ん|い)$/.test(a)) return false;
+  const aDan = /[あかがさざただなはばぱまやらわ]$/.test(a);
+  if (!aDan && !/ない/.test(String(q.expl || ''))) return false;
+  q.prompt = String(q.prompt).replace(BLANK_NAIDE, (all, b, sp, tail) => b + sp + 'ない' + tail);
+  delete q.ko; delete q.cko; q.fixed = q.fixed || '빈칸 뒤에 ない가 빠져 있어서 고쳤어요'; return true;
+}
+/* 저장된 모든 문제에 규칙 수정 적용 (기록·진도는 그대로) */
+function ruleFixBanks() {
+  let n = 0;
+  for (const b of App.banks) for (const q of b.qs || []) if (ruleFixQ(q)) { b._dirty = true; n++; }
+  if (n) scheduleBankSave();
+  return n;
+}
 /* 문제 은행 검수: 아직 검수하지 않은 문제를 8개씩 확인해서 고치거나 빼요 */
-async function checkBank({ onProgress, all = false } = {}) {
-  const targets = [];
+async function checkBank({ onProgress, all = false, limit = 0 } = {}) {
+  let targets = [];
   for (const b of App.banks) for (const q of b.qs || []) if (!q.bad && (all || !q.chk)) targets.push([b, q]);
+  if (limit) targets = targets.slice(-limit); // 최근 문제부터
   let fixed = 0, dropped = 0, done = 0;
   for (let i = 0; i < targets.length; i += 8) {
     const part = targets.slice(i, i + 8);

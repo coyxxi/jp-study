@@ -101,7 +101,7 @@ function retryOf(q) {
 }
 function runQuiz(root, qs, opts = {}) {
   const mode = opts.mode || 'practice';
-  qs = qs.filter(Boolean);
+  qs = qs.filter(Boolean); qs.forEach(q => { if (q.bank && ruleFixQ(q)) { const b = App.banks.find(x => x.id === q.bank); const o = b?.qs?.find(x => x.id === q.id); if (o && o !== q) ruleFixQ(o); if (b) { b._dirty = true; scheduleBankSave(); } } else ruleFixQ(q); });
   const res = []; let i = 0, startAt = Date.now(), timerId = null;
   root.innerHTML = '';
   const box = h('div', { class: 'quiz' });

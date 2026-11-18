@@ -30,8 +30,8 @@ const uid = (p = '') => p + Date.now().toString(36) + Math.random().toString(36)
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const AREA = { v: '문자·어휘', g: '문법', r: '독해', l: '청해' };
-const STATUS = { n: '미학습', a: '학원에서 배움', l: '학습 중', m: '익힘' };
-const STATUS_CLS = { n: 'c-gray', a: 'c-blue', l: 'c-amber', m: 'c-green' };
+const STATUS = { n: '미학습', l: '학습 중', m: '익힘' };
+const STATUS_CLS = { n: 'c-gray', a: 'c-amber', l: 'c-amber', m: 'c-green' };
 const INTERVALS = [1, 2, 4, 7, 15, 30];
 
 const App = {
@@ -143,7 +143,8 @@ const chunkOf = id => id.split('-')[0];
 
 /* ---------- progress ---------- */
 function P(id) { id = canon(id); const c = App.prog[chunkOf(id)]; return (c && c[id]) || null; }
-function status(id) { return P(id)?.s || 'n'; }
+// 학원에서 배움(a)은 화면에서 학습 중(l)으로 합쳐 보여요 (저장된 값은 그대로)
+function status(id) { const s = P(id)?.s || 'n'; return s === 'a' ? 'l' : s; }
 function ensureP(id) {
   id = canon(id);
   const k = chunkOf(id);
@@ -337,6 +338,14 @@ function recordAnswer(ids, ok, area, qref, sub) {
 /* 외울 단어 풀: 학원에서 배움·학습 중인 단어 (익힘은 빼요. 익힘은 확인할 날이 되면 복습으로 나와요) */
 function learnVocab() { return allVocab().filter(v => ['a', 'l'].includes(status(v.id))).map(v => v.id); }
 /* 단어장에서 직접 익힘으로 바꾸기 / 되돌리기 */
+/* 카드에서 바로 상태 바꾸기: n(미학습) · l(학습 중) · m(익힘) */
+function setStatus(id, to) {
+  if (to === 'm') return setMastered(id, true);
+  const p = ensureP(id);
+  if (to === 'l') { if (p.s === 'm') { p.cs = 0; p.ms = 0; } p.s = 'l'; p.nx = App.today; }
+  else { p.s = 'n'; p.cs = 0; p.ms = 0; delete p.nx; }
+  markDirty('prog:' + chunkOf(canon(id)));
+}
 function setMastered(id, on) {
   const p = ensureP(id);
   if (on) { p.s = 'm'; p.md = App.today; p.cs = Math.max(p.cs || 0, 3); p.ms = 1; p.nx = addDays(App.today, M_INTERVALS[1]); }

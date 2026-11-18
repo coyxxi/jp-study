@@ -1,7 +1,7 @@
 /* 일본어 공부방 · 공부 탭 (단어장 · 한자 · 문법) */
 'use strict';
 const LV_OPTS = [['', '전 레벨'], ['5', 'N5'], ['4', 'N4'], ['3', 'N3'], ['2', 'N2'], ['0', '기타']];
-const ST_OPTS = [['', '전 상태'], ['due', '오늘 복습'], ['learn', '외울 것 (배움·학습 중)'], ...Object.entries(STATUS)];
+const ST_OPTS = [['', '전 상태'], ['due', '오늘 복습'], ['n', '미학습'], ['l', '학습 중'], ['m', '익힘']];
 const sel = (opts, val) => h('select', {}, opts.map(([k, n]) => h('option', { value: k, selected: String(k) === String(val ?? '') }, n)));
 const studyPrefs = (() => { try { return JSON.parse(localStorage.getItem('jp.study') || '{}'); } catch { return {}; } })();
 const savePrefs = () => { try { localStorage.setItem('jp.study', JSON.stringify(studyPrefs)); } catch { } };
@@ -9,8 +9,8 @@ function statusMatch(id, f) {
   if (!f) return true;
   const p = P(id) || {};
   if (f === 'due') return p.nx && p.nx <= App.today;
-  if (f === 'learn') return ['a', 'l'].includes(p.s || 'n');
-  return (p.s || 'n') === f;
+  if (f === 'learn' || f === 'a') f = 'l'; // 예전 필터값
+  return status(id) === f;
 }
 // 예전엔 '복습·학습 중'을 항상 맨 앞에 둬서 같은 단어만 반복됐어요 → 오래 안 나온 것부터 골고루
 function priority(ids) { return balancedPick(ids); }
@@ -72,13 +72,15 @@ function studyVocab(v) {
     }
     for (const it of rows.slice(page * 60, page * 60 + 60)) {
       const st = status(it.id);
-      grid.append(h('button', { class: 'wcard st-' + st, onclick: () => itemDetail(it, () => draw(true)) },
-        h('div', { class: 'wtop' }, h('span', { class: 'ww', lang: 'ja' }, it.w), sayBtn(it.w)),
-        it.r && it.r !== it.w ? h('div', { class: 'wr', lang: 'ja' }, it.r) : null,
+      // 상태는 카드 아래 버튼으로 바로 바꿔요 (미학습 · 학습 중 · 익힘)
+      // 상태 칩을 누를 때마다 미학습 → 학습 중 → 익힘 → 미학습
+      const NEXT = { n: 'l', l: 'm', m: 'n' };
+      const seg = h('div', { class: 'wfoot' }, h('span', { role: 'button', class: 'stchip s-' + st, title: '눌러서 상태 바꾸기', onclick: e => { e.stopPropagation(); const to = NEXT[st]; setStatus(it.id, to); flushSaves(); toast(`${it.w} → ${STATUS[to]}` + (to === 'm' ? ' (퀴즈에서 빠져요)' : '')); draw(true); } }, STATUS[st], h('i', {}, '↻')));
+      grid.append(h('button', { class: 'wcard', onclick: () => itemDetail(it, () => draw(true)) },
+        h('div', { class: 'wtop' }, h('span', { class: 'ww', lang: 'ja' }, it.w), h('span', { class: 'wl' }, it.l ? 'N' + it.l : ''), sayBtn(it.w)),
+        h('div', { class: 'wr', lang: 'ja' }, it.r && it.r !== it.w ? it.r : '\u00a0'),
         h('div', { class: 'wm' }, it.m),
-        h('div', { class: 'wb' }, h('span', { class: 'chip ' + STATUS_CLS[st] }, STATUS[st]), h('span', { class: 'muted sm' }, it.l ? 'N' + it.l : ''),
-          // 이미 아는 단어는 바로 익힘으로 → 퀴즈·오늘 세트에서 빠지고, 7일 뒤 한 번만 확인 문제로 나와요
-          h('span', { class: 'mtoggle' + (st === 'm' ? ' on' : ''), role: 'button', title: st === 'm' ? '익힘 해제 (다시 외울 단어로)' : '아는 단어 → 익힘으로', onclick: e => { e.stopPropagation(); setMastered(it.id, st !== 'm'); flushSaves(); toast(st === 'm' ? `${it.w} 익힘을 해제했어요.` : `${it.w}을(를) 익힘으로 바꿨어요. 퀴즈에서 빠져요.`); draw(true); } }, st === 'm' ? '✓ 익힘' : '익힘으로'))));
+        seg));
     }
     more.hidden = (page + 1) * 60 >= rows.length;
   }
@@ -121,7 +123,7 @@ function relatedWords(c) { return allVocab().filter(w => w.w.includes(c)).sort((
 function kanjiDetail(k, after) {
   const words = relatedWords(k.c).slice(0, 24);
   const p = P(k.id) || {};
-  const s = sel(Object.entries(STATUS), p.s || 'n');
+  const s = sel(Object.entries(STATUS), status(k.id));
   const m = modal(h('div', { class: 'kdetail' },
     h('div', { class: 'khead' }, h('div', { class: 'kbig jp-serif', lang: 'ja' }, k.c), h('div', {}, h('div', { class: 'big' }, k.m), h('div', { class: 'kv' }, h('span', {}, '음독'), h('b', { lang: 'ja' }, k.on || '-')), h('div', { class: 'kv' }, h('span', {}, '훈독'), h('b', { lang: 'ja' }, k.kun || '-')), h('span', { class: 'chip c-gray' }, k.l === 1 ? 'N1 이상 (사전)' : 'N' + k.l))),
     h('h3', { class: 'mini' }, '획순'), strokeBox(k, { size: 180 }), h('p', { class: 'muted sm stk-credit' }, '획순 자료: KanjiVG (CC BY-SA 3.0)'),

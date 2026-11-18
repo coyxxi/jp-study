@@ -115,18 +115,20 @@ async function renderToday(v) {
     h('div', { class: 'dday' }, h('b', {}, dd > 0 ? `D-${dd}` : dd === 0 ? 'D-DAY' : '완료'), h('div', {}, nextExam().name, h('br'), md(examDate())))));
   const lr = App.state.autoGen?.lastResult;
   if (lr && lr.date === App.today) v.append(h('div', { class: 'note ' + (lr.ok ? '' : 'warn') }, lr.ok ? (lr.n ? `오늘 ${lr.at}에 새 문제 ${lr.n}개를 만들어 두었어요. 오늘 세트와 시험에 섞여 나와요.` : `오늘 아침 자동 만들기: ${lr.msg || '건너뜀'}`) : `오늘 아침 자동 문제 만들기에 실패했어요 (${lr.msg || ''}). 설정에서 "지금 한 번 만들기"를 눌러 보세요.`));
-  const grid = h('div', { class: 'grid2' }); v.append(grid);
+  // 왼쪽: 오늘의 세트 / 오른쪽: 준비도 + 학습 상태를 위아래로
+  const grid = h('div', { class: 'grid2 home-top' }); v.append(grid);
   const setCard = card('오늘의 세트', '', h('div', { class: 'muted' }, '불러오는 중…'));
-  grid.append(setCard);
+  const rightCol = h('div', { class: 'home-side' });
+  grid.append(setCard, rightCol);
   // readiness
   const acc = areaAccuracy(14);
   const bars = Object.entries(AREA).map(([a, name]) => { const [o, n] = acc[a]; const p = n ? Math.round(o / n * 100) : null; return { a, name, p, n }; });
   const measured = bars.filter(b => b.p != null);
   const weakest = measured.length ? measured.reduce((x, y) => (y.p < x.p ? y : x)) : null;
-  grid.append(card(`N${targetLevel()} 준비도`, '지난 2주 정답률',
+  rightCol.append(card(`N${targetLevel()} 준비도`, '지난 2주 정답률',
     ...bars.map(b => h('div', { class: 'bar' + (weakest && b.a === weakest.a && measured.length > 1 ? ' weak' : '') }, h('div', { class: 'l' }, b.name, h('b', {}, b.p == null ? '기록 없음' : b.p + '%')), h('div', { class: 'tr' }, h('div', { style: `width:${b.p || 0}%` })))),
     weakest && measured.length > 1 ? h('div', { class: 'tip' }, `${weakest.name}이(가) 가장 낮아요. 오늘 세트와 영역 집중 시험으로 보강해 보세요.`) : h('div', { class: 'tip soft' }, '문제를 풀수록 영역별 정답률이 쌓여요. 먼저 시험 탭의 진단 모의고사를 추천해요.')));
-  const g3 = h('div', { class: 'grid2' }); v.append(g3);
+  const g3 = h('div', { class: 'home-bottom' }); v.append(g3);
   // last lesson
   const L = App.lessons[0];
   g3.append(card('최근 수업 노트', L ? md(L.date) : '',
@@ -138,9 +140,9 @@ async function renderToday(v) {
   // status
   const st = levelStats(targetLevel());
   const seg = (k, color) => h('div', { style: `width:${st[k] / st.total * 100}%;background:${color}` });
-  g3.append(card(`N${targetLevel()} 항목 학습 상태`, `전체 ${st.total}개`,
-    h('div', { class: 'stack' }, seg('m', 'var(--ok)'), seg('l', 'var(--amber)'), seg('a', 'var(--blue)'), seg('n', 'var(--empty)')),
-    h('div', { class: 'legend' }, [['m', '익힘', 'var(--ok)'], ['l', '학습 중', 'var(--amber)'], ['a', '학원에서 배움', 'var(--blue)'], ['n', '미학습', 'var(--empty)']].map(([k, n, c]) => h('div', {}, h('i', { style: `background:${c}` }), n, h('b', {}, st[k])))),
+  rightCol.append(card(`N${targetLevel()} 항목 학습 상태`, `전체 ${st.total}개`,
+    h('div', { class: 'stack' }, seg('m', 'var(--ok)'), seg('l', 'var(--amber)'), seg('n', 'var(--empty)')),
+    h('div', { class: 'legend' }, [['m', '익힘', 'var(--ok)'], ['l', '학습 중', 'var(--amber)'], ['n', '미학습', 'var(--empty)']].map(([k, n, c]) => h('div', { style: `--c:${c}` }, h('i', { style: `background:${c}` }), h('span', { class: 'muted sm' }, n), h('b', {}, st[k])))),
     h('p', { class: 'muted sm' }, '서로 다른 시험(2시간 이상 간격)에서 3번 연속 맞히면 "익힘"이 돼요. 익힘 뒤에도 3·7·15·30일 뒤 확인 문제가 나와요')));
   // build set
   const day = await getDay();
@@ -933,9 +935,9 @@ function renderStats(v) {
 }
 function itemDetail(it, after) {
   const p = P(it.id) || {};
-  const cur = p.s || 'n';
+  const cur = status(it.id);
   // 익힘은 아래 버튼으로만 (상태 목록에는 미학습·학습 중 등만)
-  const sel = h('select', {}, Object.entries(STATUS).filter(([k]) => k !== 'm').map(([k, n]) => h('option', { value: k, selected: k === (cur === 'm' ? 'l' : cur) }, n)));
+  const sel = h('select', {}, [['n', '미학습'], ['l', '학습 중']].map(([k, n]) => h('option', { value: k, selected: k === (cur === 'n' ? 'n' : 'l') }, n)));
   const ex = it.t === 'v' ? App.EX.filter(e => e.j.includes(it.w)).slice(0, 4) : [];
   const m = modal(h('div', {},
     h('h2', { class: 'jp-serif', lang: 'ja' }, itemLabel(it)), h('p', { class: 'muted' }, [it.r, it.on && '음 ' + it.on, it.kun && '훈 ' + it.kun].filter(Boolean).join(' · ')),

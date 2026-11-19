@@ -107,43 +107,42 @@ function saveDay() {
     .then(m => { if (m && App.dayDoc?.date === m.date) for (const k of Object.keys(m.sec || {})) if (m.sec[k]?.done && App.dayDoc.sec[k]) App.dayDoc.sec[k].done = true; }).catch(() => {});
 }
 
+const ONIGIRI_SVG = '<svg viewBox="0 0 100 92" width="58" height="54" aria-hidden="true"><path d="M50 6c8 0 14 6 20 16l20 38c6 12-2 26-16 26H26C12 86 4 72 10 60l20-38C36 12 42 6 50 6z" fill="#fff" stroke="#5A4048" stroke-width="3"/><rect x="28" y="60" width="44" height="26" rx="4" fill="#5A4048"/><circle cx="40" cy="44" r="3.2" fill="#5A4048"/><circle cx="60" cy="44" r="3.2" fill="#5A4048"/><path d="M45 51q5 5 10 0" stroke="#5A4048" stroke-width="2.6" fill="none" stroke-linecap="round"/><ellipse cx="33" cy="51" rx="5" ry="3" fill="#FFC1CF"/><ellipse cx="67" cy="51" rx="5" ry="3" fill="#FFC1CF"/></svg>';
 async function renderToday(v) {
   const dd = daysBetween(App.today, examDate());
   const d = new Date();
   const wd = '일월화수목금토'[d.getDay()];
-  v.append(pageHead(`${d.getMonth() + 1}월 ${d.getDate()}일 ${wd}요일, 오늘의 공부`, '학원 가기 전 30분에 맞춰 구성했어요',
-    h('div', { class: 'dday' }, h('b', {}, dd > 0 ? `D-${dd}` : dd === 0 ? 'D-DAY' : '완료'), h('div', {}, nextExam().name, h('br'), md(examDate())))));
+  const greet = h('span', {}, '오늘의 공부');
+  // 한 화면에 들어오게: 머리 한 줄 → 왼쪽 오늘의 세트 / 오른쪽 내 실력 한 장
+  v.append(h('div', { class: 'thead' },
+    h('div', { class: 'mascot' }, h('span', { html: ONIGIRI_SVG }), h('div', { class: 'bub2' }, h('b', {}, `${d.getMonth() + 1}월 ${d.getDate()}일 ${wd}요일`), greet)),
+    h('div', { class: 'tdday' }, h('b', {}, dd > 0 ? `D-${dd}` : dd === 0 ? 'D-DAY' : '완료'), h('span', {}, nextExam().name))));
   const lr = App.state.autoGen?.lastResult;
-  if (lr && lr.date === App.today) v.append(h('div', { class: 'note ' + (lr.ok ? '' : 'warn') }, lr.ok ? (lr.n ? `오늘 ${lr.at}에 새 문제 ${lr.n}개를 만들어 두었어요. 오늘 세트와 시험에 섞여 나와요.` : `오늘 아침 자동 만들기: ${lr.msg || '건너뜀'}`) : `오늘 아침 자동 문제 만들기에 실패했어요 (${lr.msg || ''}). 설정에서 "지금 한 번 만들기"를 눌러 보세요.`));
-  // 왼쪽: 오늘의 세트 / 오른쪽: 준비도 + 학습 상태를 위아래로
-  const grid = h('div', { class: 'grid2 home-top' }); v.append(grid);
-  const setCard = card('오늘의 세트', '', h('div', { class: 'muted' }, '불러오는 중…'));
-  const rightCol = h('div', { class: 'home-side' });
-  grid.append(setCard, rightCol);
-  // readiness
+  if (lr && lr.date === App.today && !lr.ok) v.append(h('div', { class: 'note warn' }, `오늘 아침 자동 문제 만들기에 실패했어요 (${lr.msg || ''}). 설정에서 "지금 한 번 만들기"를 눌러 보세요.`));
+  const grid = h('div', { class: 'tgrid' }); v.append(grid);
+  const setCard = h('section', { class: 'card tset' }, h('div', { class: 'muted' }, '불러오는 중…'));
+  const side = h('section', { class: 'card tside' });
+  grid.append(setCard, side);
+  // 내 실력: 영역별 정답률(2×2) + 학습 상태 막대 + 최근 수업 한 줄
   const acc = areaAccuracy(14);
-  const bars = Object.entries(AREA).map(([a, name]) => { const [o, n] = acc[a]; const p = n ? Math.round(o / n * 100) : null; return { a, name, p, n }; });
+  const bars = Object.entries(AREA).map(([a, name]) => { const [o, n] = acc[a]; return { a, name, p: n ? Math.round(o / n * 100) : null }; });
   const measured = bars.filter(b => b.p != null);
-  const weakest = measured.length ? measured.reduce((x, y) => (y.p < x.p ? y : x)) : null;
-  rightCol.append(card(`N${targetLevel()} 준비도`, '지난 2주 정답률',
-    ...bars.map(b => h('div', { class: 'bar' + (weakest && b.a === weakest.a && measured.length > 1 ? ' weak' : '') }, h('div', { class: 'l' }, b.name, h('b', {}, b.p == null ? '기록 없음' : b.p + '%')), h('div', { class: 'tr' }, h('div', { style: `width:${b.p || 0}%` })))),
-    weakest && measured.length > 1 ? h('div', { class: 'tip' }, `${weakest.name}이(가) 가장 낮아요. 오늘 세트와 영역 집중 시험으로 보강해 보세요.`) : h('div', { class: 'tip soft' }, '문제를 풀수록 영역별 정답률이 쌓여요. 먼저 시험 탭의 진단 모의고사를 추천해요.')));
-  const g3 = h('div', { class: 'home-bottom' }); v.append(g3);
-  // last lesson
-  const L = App.lessons[0];
-  g3.append(card('최근 수업 노트', L ? md(L.date) : '',
-    L ? h('div', { class: 'note-mini', onclick: () => showLesson(L) },
-      h('span', { class: 'chip c-blue' }, L.unit || ''), h('div', { class: 'g jp-serif', lang: 'ja' }, L.note?.title || '수업 기록'), h('div', { class: 'muted' }, L.note?.sub || ''),
-      h('div', { class: 'meta' }, h('span', { class: 'chip c-gray' }, `단어 ${(L.vocabIds || []).length}`), h('span', { class: 'chip c-gray' }, `문법 ${(L.grammarIds || []).length}`), h('span', { class: 'chip c-gray' }, `예문 ${L.exCount || 0}`)),
-      h('ul', {}, (L.note?.apps || []).slice(0, 3).map(a => h('li', { lang: 'ja' }, a))))
-      : h('div', { class: 'empty sm' }, '아직 수업 기록이 없어요.', h('br'), h('button', { class: 'btn sm', onclick: () => nav('record') }, '첫 수업 기록하기'))));
-  // status
+  const weakest = measured.length > 1 ? measured.reduce((x, y) => (y.p < x.p ? y : x)) : null;
   const st = levelStats(targetLevel());
-  const seg = (k, color) => h('div', { style: `width:${st[k] / st.total * 100}%;background:${color}` });
-  rightCol.append(card(`N${targetLevel()} 항목 학습 상태`, `전체 ${st.total}개`,
-    h('div', { class: 'stack' }, seg('m', 'var(--ok)'), seg('l', 'var(--amber)'), seg('n', 'var(--empty)')),
-    h('div', { class: 'legend' }, [['m', '익힘', 'var(--ok)'], ['l', '학습 중', 'var(--amber)'], ['n', '미학습', 'var(--empty)']].map(([k, n, c]) => h('div', { style: `--c:${c}` }, h('i', { style: `background:${c}` }), h('span', { class: 'muted sm' }, n), h('b', {}, st[k])))),
-    h('p', { class: 'muted sm' }, '서로 다른 시험(2시간 이상 간격)에서 3번 연속 맞히면 "익힘"이 돼요. 익힘 뒤에도 3·7·15·30일 뒤 확인 문제가 나와요')));
+  const pct = k => st.total ? st[k] / st.total * 100 : 0;
+  const L = App.lessons[0];
+  side.append(
+    h('h2', {}, `N${targetLevel()} 내 실력`, h('span', {}, '최근 2주 정답률')),
+    h('div', { class: 'tacc' }, bars.map(b => h('div', { class: 'ta' + (weakest && b.a === weakest.a ? ' weak' : '') },
+      h('div', { class: 'tal' }, h('span', {}, b.name), h('b', {}, b.p == null ? '–' : b.p + '%')),
+      h('div', { class: 'tr' }, h('div', { style: `width:${b.p || 0}%` }))))),
+    weakest ? h('p', { class: 'ttip' }, `${josa(weakest.name, '이', '가')} 가장 약해요 → 영역 집중으로 보강`) : h('p', { class: 'ttip soft' }, '문제를 풀면 영역별 정답률이 쌓여요'),
+    h('div', { class: 'tstat' },
+      h('div', { class: 'tstl' }, h('span', {}, '학습 상태'), h('span', { class: 'muted' }, `전체 ${st.total}개`)),
+      h('div', { class: 'stack' }, h('div', { style: `width:${pct('m')}%;background:var(--ok)` }), h('div', { style: `width:${pct('l')}%;background:var(--amber)` }), h('div', { style: `width:${pct('n')}%;background:var(--empty)` })),
+      h('div', { class: 'tleg' }, [['m', '익힘', 'var(--ok)'], ['l', '학습 중', 'var(--amber)'], ['n', '미학습', 'var(--empty)']].map(([k, n, c]) => h('span', {}, h('i', { style: `background:${c}` }), n, ' ', h('b', {}, st[k]))))),
+    L ? h('button', { class: 'tlast', onclick: () => showLesson(L) }, h('span', { class: 'muted' }, `최근 수업 ${md(L.date)}`), h('b', { lang: 'ja' }, L.note?.title || L.unit || '수업 노트'), h('i', {}, '›'))
+      : h('button', { class: 'tlast', onclick: () => nav('record') }, h('span', { class: 'muted' }, '수업 기록'), h('b', {}, '첫 수업 기록하기'), h('i', {}, '›')));
   // build set
   const day = await getDay();
   setCard.innerHTML = '';
@@ -157,6 +156,8 @@ async function renderToday(v) {
     ['drill', `순간 작문 ${sec.drill.ids.length || 3}문장`, '한국어 → 일본어로 바로 말하기', 'c-amber', '회화', 6],
   ].filter(Boolean);
   const doneCount = rows.filter(r => sec[r[0]]?.done).length;
+  const left = rows.length - doneCount;
+  greet.textContent = left === rows.length ? `오늘도 한 입씩! ${left}개 남았어요` : left > 0 ? `좋아요! ${left}개만 더 하면 끝` : '오늘 세트 끝! 수고했어요';
   setCard.append(h('h2', {}, '오늘의 세트' + ((day.round || 1) > 1 ? ` · ${day.round}회차` : ''), h('span', {}, `${doneCount} / ${rows.length} 완료`)));
   let firstOpen = null;
   rows.forEach(([key, title, desc, cls, tag, min], idx) => {
@@ -269,9 +270,15 @@ function renderRecord(v, sub = 'lesson') {
   cols.append(mid, right);
   // history
   v.append(h('h3', { class: 'sub' }, '지난 수업 노트'));
-  const hist = h('div', { class: 'histgrid' }); v.append(hist);
-  if (!App.lessons.length) hist.append(h('div', { class: 'muted' }, '아직 기록이 없어요.'));
-  for (const L of App.lessons.slice(0, 30)) hist.append(h('button', { class: 'histcard', onclick: () => showLesson(L) }, h('span', { class: 'muted sm' }, L.date + ' · ' + (L.unit || '')), h('b', { lang: 'ja' }, L.note?.title || '수업'), h('span', { class: 'muted sm' }, `단어 ${(L.vocabIds || []).length} · 문법 ${(L.grammarIds || []).length}`)));
+  const hist = h('div', { class: 'histgrid' }); const hpg = h('div'); v.append(hist, hpg);
+  let hp = 0;
+  const drawHist = () => {
+    hist.innerHTML = '';
+    if (!App.lessons.length) hist.append(h('div', { class: 'muted' }, '아직 기록이 없어요.'));
+    for (const L of App.lessons.slice(hp * 8, hp * 8 + 8)) hist.append(h('button', { class: 'histcard', onclick: () => showLesson(L) }, h('span', { class: 'muted sm' }, L.date + ' · ' + (L.unit || '')), h('b', { lang: 'ja' }, L.note?.title || '수업'), h('span', { class: 'muted sm' }, `단어 ${(L.vocabIds || []).length} · 문법 ${(L.grammarIds || []).length}`)));
+    hpg.innerHTML = ''; hpg.append(...[pager(App.lessons.length, 8, hp, p => { hp = p; drawHist(); scrollTop(hist); }, '개 수업')].filter(Boolean));
+  };
+  drawHist();
 
   let ctl = null;
   const setStatusBox = (title, text, extra) => { statusBox.innerHTML = ''; statusBox.append(h('div', { class: 'status' }, h('b', {}, title), text, extra || null)); };
@@ -675,7 +682,15 @@ function renderTalk(v, sub = 'drill') {
   const fromLabel = { lesson: '수업', memo: '모임', ai: 'AI', role: '롤플레이' };
   listCard.querySelector('h2').append(h('button', { class: 'btn ghost sm', title: '내 문장과 수업 예문의 오타를 AI로 찾아 고쳐요', onclick: () => typoCheck() }, '🔍 오타 검사'));
   listCard.append(h('p', { class: 'muted sm' }, '문장을 누르면 고치거나 지울 수 있어요.'));
-  for (const d of [...App.drill].filter(d => !d.del).reverse().slice(0, 80)) listCard.append(h('div', { class: 'drow click', onclick: () => editDrill(d, () => nav('talk', 'drill')) }, h('div', {}, h('div', {}, d.ko), h('small', { lang: 'ja', class: 'muted' }, d.jp)), h('div', { class: 'drside' }, drillDone(d) ? null : h('span', { class: 'chip c-gray' }, drillOk(d) ? `${drillOk(d)}/${DRILL_DONE}` + (fromLabel[d.from] ? ' · ' + fromLabel[d.from] : '') : fromLabel[d.from] || ''), drillMToggle(d, () => nav('talk', 'drill')))));
+  const dl = h('div'), dpg = h('div'); listCard.append(dl, dpg);
+  const dAll = [...App.drill].filter(d => !d.del).reverse();
+  let dp = 0;
+  const drawDl = () => {
+    dl.innerHTML = '';
+    for (const d of dAll.slice(dp * 10, dp * 10 + 10)) dl.append(h('div', { class: 'drow click', onclick: () => editDrill(d, () => nav('talk', 'drill')) }, h('div', {}, h('div', {}, d.ko), h('small', { lang: 'ja', class: 'muted' }, d.jp)), h('div', { class: 'drside' }, drillDone(d) ? null : h('span', { class: 'chip c-gray' }, drillOk(d) ? `${drillOk(d)}/${DRILL_DONE}` + (fromLabel[d.from] ? ' · ' + fromLabel[d.from] : '') : fromLabel[d.from] || ''), drillMToggle(d, () => nav('talk', 'drill')))));
+    dpg.innerHTML = ''; dpg.append(...[pager(dAll.length, 10, dp, p => { dp = p; drawDl(); scrollTop(listCard); }, '문장')].filter(Boolean));
+  };
+  drawDl();
   if (!App.drill.length) listCard.append(h('div', { class: 'muted' }, '수업을 기록하거나 모임 메모를 저장하면 문장이 쌓여요.'));
   right.append(listCard);
 }
@@ -949,7 +964,7 @@ function itemDetail(it, after) {
 }
 function weeklyChart() {
   const W = weeklyAccuracy(4);
-  const colors = { v: '#2F4A3A', g: '#3D6A8A', r: '#B9852F', l: '#C4553C' };
+  const colors = { v: '#E0718F', g: '#7A6A9E', r: '#B9852F', l: '#E0604F' };
   const any = W.some(w => Object.values(w.acc).some(a => a[1]));
   if (!any) return h('div', { class: 'empty sm' }, '문제를 풀면 주별 정답률 그래프가 그려져요.');
   const x = i => 80 + i * 180, y = p => 185 - p * 1.65;

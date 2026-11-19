@@ -5,6 +5,8 @@ for (const P of [Element.prototype, DocumentFragment.prototype]) for (const fn o
   const orig = P[fn]; P[fn] = function (...a) { return orig.apply(this, a.filter(x => x != null && x !== false)); };
 }
 const $ = (s, r = document) => r.querySelector(s);
+// 받침에 따라 이/가, 을/를, 은/는 붙이기
+const josa = (w, a, b) => { const c = String(w).trim().slice(-1).charCodeAt(0); const has = c >= 0xAC00 && c <= 0xD7A3 ? (c - 0xAC00) % 28 > 0 : /[0-9lmnr]$/i.test(w); return w + (has ? a : b); };
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const h = (tag, attrs = {}, ...kids) => {
@@ -889,6 +891,25 @@ async function audioUsage(month) {
   const rate = App.today < '2027-01-01' ? 0.0135 : 0.027; // 1분당 대략 (2027년부터 2배)
   return { n: list.length, sec, cost: sec / 60 * rate, total: Object.keys(idx).length };
 }
+
+/* ---------- 숫자 페이지 넘기기: ‹ 1 2 3 … 9 › ---------- */
+function pager(total, per, cur, onGo, label = '개') {
+  const pages = Math.ceil(total / per);
+  if (pages <= 1) return null;
+  const go = p => { if (p < 0 || p >= pages || p === cur) return; onGo(p); };
+  const nums = new Set([0, pages - 1, cur - 1, cur, cur + 1].filter(p => p >= 0 && p < pages));
+  if (cur <= 2) [1, 2, 3].forEach(p => p < pages && nums.add(p));
+  if (cur >= pages - 3) [pages - 2, pages - 3, pages - 4].forEach(p => p >= 0 && nums.add(p));
+  const list = [...nums].sort((a, b) => a - b);
+  const btns = []; let prev = -1;
+  for (const p of list) { if (p - prev > 1) btns.push(h('span', { class: 'pg-gap' }, '…')); btns.push(h('button', { class: 'pg-n' + (p === cur ? ' on' : ''), onclick: () => go(p) }, String(p + 1))); prev = p; }
+  const from = cur * per + 1, to = Math.min(total, (cur + 1) * per);
+  return h('div', { class: 'pager' },
+    h('button', { class: 'pg-a', disabled: cur === 0, 'aria-label': '이전', onclick: () => go(cur - 1) }, '‹'), ...btns,
+    h('button', { class: 'pg-a', disabled: cur === pages - 1, 'aria-label': '다음', onclick: () => go(cur + 1) }, '›'),
+    h('span', { class: 'pg-info' }, `${total}${label} 중 ${from}–${to}`));
+}
+const scrollTop = el => { try { const y = el.getBoundingClientRect().top + window.scrollY - 16; if (y < window.scrollY) window.scrollTo({ top: y, behavior: 'smooth' }); } catch { } };
 
 /* ---------- db load ---------- */
 async function loadAll() {

@@ -40,8 +40,11 @@ function studyVocab(v) {
   const fSrc = sel(srcOpts, pf.src);
   const info = h('div', { class: 'studybar' });
   const grid = h('div', { class: 'wgrid' });
-  const more = h('button', { class: 'linkbtn' }, '더 보기');
-  v.append(h('div', { class: 'card' }, h('div', { class: 'search' }, q, fLv, fSt, fSrc), info, grid, more));
+  const pgBox = h('div');
+  const vcard = h('div', { class: 'card' }, h('div', { class: 'search' }, q, fLv, fSt, fSrc), info, grid, pgBox);
+  v.append(vcard);
+  const isPhone = () => window.matchMedia('(max-width:900px)').matches;
+  const PER = isPhone() ? 10 : 20; // 휴대폰 10개 (2칸×5줄), PC 20개 (4칸×5줄)
   let rows = [], page = 0;
   const memoIds = () => new Set(App.memos.flatMap(m => (m.entries || []).map(e => e.id).filter(Boolean)));
   function compute() {
@@ -70,7 +73,8 @@ function studyVocab(v) {
           } }, '퀴즈 15문항')));
       if (!rows.length) grid.append(h('div', { class: 'empty sm' }, '조건에 맞는 단어가 없어요.'));
     }
-    for (const it of rows.slice(page * 60, page * 60 + 60)) {
+    if (!reset) grid.innerHTML = '';
+    for (const it of rows.slice(page * PER, page * PER + PER)) {
       const st = status(it.id);
       // 상태는 카드 아래 버튼으로 바로 바꿔요 (미학습 · 학습 중 · 익힘)
       // 상태 칩을 누를 때마다 미학습 → 학습 중 → 익힘 → 미학습
@@ -82,9 +86,8 @@ function studyVocab(v) {
         h('div', { class: 'wm' }, it.m),
         seg));
     }
-    more.hidden = (page + 1) * 60 >= rows.length;
+    pgBox.innerHTML = ''; pgBox.append(...[pager(rows.length, PER, page, p => { page = p; draw(false); scrollTop(vcard); })].filter(Boolean));
   }
-  more.onclick = () => { page++; draw(false); };
   [q, fLv, fSt, fSrc].forEach(el => el.addEventListener('input', compute));
   compute();
 }
@@ -94,8 +97,10 @@ function studyKanji(v) {
   const pf = studyPrefs.kanji = studyPrefs.kanji || { lv: String(targetLevel()), st: '' };
   const q = h('input', { placeholder: '한자, 뜻, 읽기 검색…', value: pf.q || '' });
   const fLv = sel([['', '전 레벨'], ['5', 'N5'], ['4', 'N4'], ['3', 'N3'], ['2', 'N2'], ['1', 'N1 이상 (사전)']], pf.lv), fSt = sel(ST_OPTS, pf.st);
-  const info = h('div', { class: 'studybar' }); const grid = h('div', { class: 'kgrid' });
-  v.append(h('div', { class: 'card' }, h('div', { class: 'search' }, q, fLv, fSt), info, grid));
+  const info = h('div', { class: 'studybar' }); const grid = h('div', { class: 'kgrid' }); const pgBox = h('div');
+  const kcard = h('div', { class: 'card' }, h('div', { class: 'search' }, q, fLv, fSt), info, grid, pgBox);
+  v.append(kcard);
+  let kpage = 0, lastKey = '';
   function compute() {
     Object.assign(pf, { q: q.value, lv: fLv.value, st: fSt.value }); savePrefs();
     const s = q.value.trim();
@@ -110,10 +115,13 @@ function studyKanji(v) {
       h('button', { class: 'btn sm', disabled: !rows.length, onclick: () => { const o = overlay('한자 카드'); flashcards(o.body, priority(ids).slice(0, 25), { onExit: o.close, onDone: () => { o.close(); nav('study', 'kanji'); } }); } }, '카드로 외우기'),
       h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => { const vids = priority(rows.flatMap(k => relatedWords(k.c).slice(0, 2).map(w => w.id))).slice(0, 15); const o = overlay('한자 읽기 퀴즈'); runQuiz(o.body, vids.map(id => ruleQ(id, 'read')).concat(pick(ids, 5).map(id => ruleQ(id))), { onExit: o.close, onDone: () => { o.close(); nav('study', 'kanji'); } }); } }, '읽기 퀴즈'),
       h('button', { class: 'btn ghost sm', onclick: () => groupList('k') }, '🧩 한자 묶음')));
-    for (const k of rows) {
+    const key = [q.value, fLv.value, fSt.value].join('|'); if (key !== lastKey) { kpage = 0; lastKey = key; }
+    const PER = window.matchMedia('(max-width:900px)').matches ? 25 : 50; kpage = Math.min(kpage, Math.max(0, Math.ceil(rows.length / PER) - 1));
+    for (const k of rows.slice(kpage * PER, kpage * PER + PER)) {
       const st = status(k.id);
       grid.append(h('button', { class: 'ktile st-' + st, onclick: () => kanjiDetail(k, compute) }, h('span', { class: 'kc jp-serif', lang: 'ja' }, k.c), h('span', { class: 'km' }, k.m)));
     }
+    pgBox.innerHTML = ''; pgBox.append(...[pager(rows.length, PER, kpage, p => { kpage = p; compute(); scrollTop(kcard); }, '자')].filter(Boolean));
     if (!rows.length) grid.append(h('div', { class: 'empty sm' }, '조건에 맞는 한자가 없어요.'));
   }
   [q, fLv, fSt].forEach(el => el.addEventListener('input', compute));
@@ -138,8 +146,10 @@ function studyGrammar(v) {
   const pf = studyPrefs.grammar = studyPrefs.grammar || { lv: String(targetLevel()), st: '' };
   const q = h('input', { placeholder: '문형, 뜻 검색… (예: たことがある, ~한 적이)', value: pf.q || '' });
   const fLv = sel([['', '전 레벨'], ['5', 'N5'], ['4', 'N4'], ['3', 'N3'], ['2', 'N2'], ['0', '기타']], pf.lv), fSt = sel(ST_OPTS, pf.st);
-  const info = h('div', { class: 'studybar' }); const list = h('div', { class: 'glist' });
-  v.append(h('div', { class: 'card' }, h('div', { class: 'search' }, q, fLv, fSt), info, list));
+  const info = h('div', { class: 'studybar' }); const list = h('div', { class: 'glist' }); const pgBox = h('div');
+  const gcard = h('div', { class: 'card' }, h('div', { class: 'search' }, q, fLv, fSt), info, list, pgBox);
+  v.append(gcard);
+  let gpage = 0, lastKey = '';
   function compute() {
     Object.assign(pf, { q: q.value, lv: fLv.value, st: fSt.value }); savePrefs();
     const s = q.value.trim();
@@ -150,7 +160,10 @@ function studyGrammar(v) {
       h('button', { class: 'btn sm', disabled: !rows.length, onclick: () => { const o = overlay('문법 카드'); flashcards(o.body, priority(ids).slice(0, 20), { onExit: o.close, onDone: () => { o.close(); nav('study', 'grammar'); } }); } }, '카드로 외우기'),
       h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => grammarQuiz(ids) }, '문제 풀기'),
       h('button', { class: 'btn ghost sm', onclick: () => groupList('g') }, '⚖️ 비슷한 문법 비교')));
-    for (const g of rows) list.append(grammarCard(g, compute));
+    const key = [q.value, fLv.value, fSt.value].join('|'); if (key !== lastKey) { gpage = 0; lastKey = key; }
+    const PER = 10; gpage = Math.min(gpage, Math.max(0, Math.ceil(rows.length / PER) - 1));
+    for (const g of rows.slice(gpage * PER, gpage * PER + PER)) list.append(grammarCard(g, compute));
+    pgBox.innerHTML = ''; pgBox.append(...[pager(rows.length, PER, gpage, p => { gpage = p; compute(); scrollTop(gcard); })].filter(Boolean));
     if (!rows.length) list.append(h('div', { class: 'empty sm' }, '조건에 맞는 문법이 없어요.'));
   }
   [q, fLv, fSt].forEach(el => el.addEventListener('input', compute));

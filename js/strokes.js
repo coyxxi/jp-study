@@ -94,7 +94,7 @@ function practicePad(k, d) {
   svg.append(guide, ghost);
   const cv = h('canvas', { width: size * 2, height: size * 2, style: `width:${size}px;height:${size}px` });
   box.append(svg, cv);
-  const ctx = cv.getContext('2d'); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = size / 30; ctx.strokeStyle = '#2F4A3A';
+  const ctx = cv.getContext('2d'); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = size / 30; ctx.strokeStyle = '#B34A6B';
   let drawing = false, count = 0;
   const pos = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * 2, (e.clientY - r.top) * 2]; };
   cv.addEventListener('pointerdown', e => { drawing = true; cv.setPointerCapture(e.pointerId); const [x, y] = pos(e); ctx.beginPath(); ctx.moveTo(x, y); e.preventDefault(); });

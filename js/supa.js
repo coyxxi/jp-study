@@ -179,6 +179,20 @@ function makeSample(sb) {
     if (error) { let body = null; try { body = await error.context?.json(); } catch { } return { ok: false, status: error.context?.status || 0, code: body?.code || '', message: body?.error || error.message }; }
     return Object.assign({ ok: true }, data);
   };
+  // 청해 음성 만들기 (Gemini TTS) → 저장된 파일 경로를 돌려줘요. save:false면 저장 없이 바로 소리(base64)
+  sample.tts = async (lines, opts = {}) => {
+    let data, error;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      ({ data, error } = await sb.functions.invoke('ai', { body: { kind: 'tts', lines, key: opts.key, style: opts.style, save: opts.save !== false } }));
+      const st = error?.context?.status;
+      if (!error || !([502, 503, 504, 546].includes(st) || !st) || attempt === 1) break;
+      await wait(1500);
+    }
+    if (error) { const e = await errOf(error, 'tts'); throw e; }
+    if (data?.error) throw { code: data.code || 'upstream', message: data.error };
+    return data;
+  };
+  sample.audioUrl = async path => { const { data, error } = await sb.storage.from('photos').createSignedUrl(path, 3600); if (error) throw { code: 'upstream', message: error.message }; return data.signedUrl; };
   return sample;
 }
 function parseLooseJSON(t) {

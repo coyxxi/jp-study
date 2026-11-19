@@ -13,22 +13,54 @@ function resolveRef(r) {
 
 function player(q, { exam = false } = {}) {
   const wrap = h('div', { class: 'player' });
+  const outer = h('div', { class: 'pwrap' }, wrap);
   let played = 0, rate = 1, playing = false;
   const btn = h('button', { class: 'play', 'aria-label': '재생' }, '▶');
   const wave = h('div', { class: 'wave' }, Array.from({ length: 34 }, () => h('i', { style: `height:${8 + Math.random() * 22 | 0}px` })));
   const info = h('span', { class: 'pinfo' }, exam ? '한 번만 재생' : '');
   const sp = h('div', { class: 'speed' });
-  const mk = r => h('button', { class: r === rate ? 'on' : '', onclick: e => { rate = r; $$('button', sp).forEach(b => b.classList.toggle('on', b === e.currentTarget)); } }, r + '×');
+  // AI 음성(Gemini) → 안 되면 기기 음성으로
+  const useAI = voicePrefs().mode === 'ai' && !!App.sample?.tts;
+  let aiFailed = !useAI, aiP = null, audio = null;
+  const badge = h('span', { class: 'vbadge' }, useAI ? '🎧 AI 음성' : '🔈 기본 음성');
+  const note = h('div', { class: 'pnote' });
+  const getAI = () => (aiP = aiP || aiAudioFor(q.script));
+  if (useAI) getAI().catch(() => {}); // 문제를 보는 동안 미리 준비
+  const mk = r => h('button', { class: r === rate ? 'on' : '', onclick: e => { rate = r; if (audio) audio.playbackRate = r; $$('button', sp).forEach(b => b.classList.toggle('on', b === e.currentTarget)); } }, r + '×');
   if (!exam) sp.append(mk(0.8), mk(1));
-  btn.onclick = () => {
-    if (playing) { TTS.stop(); playing = false; btn.textContent = '▶'; wrap.classList.remove('on'); return; }
-    if (exam && played) return;
-    if (!TTS.available() || !TTS.voices.length) { info.textContent = '이 기기에서는 일본어 음성을 낼 수 없어요. 스크립트를 보고 풀어 주세요.'; wrap.after(scriptBox(q)); return; }
-    played++; playing = true; btn.textContent = '❚❚'; wrap.classList.add('on');
-    TTS.speak(q.script, rate, () => { playing = false; btn.textContent = '▶'; wrap.classList.remove('on'); if (exam) { btn.disabled = true; info.textContent = '재생 완료'; } });
+  const done = () => { playing = false; btn.textContent = '▶'; wrap.classList.remove('on'); if (exam) { btn.disabled = true; info.textContent = '재생 완료'; } };
+  const basic = () => {
+    if (!TTS.available() || !TTS.voices.length) { playing = false; btn.textContent = '▶'; wrap.classList.remove('on'); info.textContent = '이 기기에서는 일본어 음성을 낼 수 없어요. 스크립트를 보고 풀어 주세요.'; outer.after(scriptBox(q)); return; }
+    TTS.speak(q.script, rate, done);
   };
-  wrap.append(btn, wave, h('div', { class: 'pside' }, info, sp));
-  return wrap;
+  btn.onclick = async () => {
+    if (playing) { TTS.stop(); if (audio) audio.pause(); playing = false; btn.textContent = '▶'; wrap.classList.remove('on'); return; }
+    if (exam && played) return;
+    played++; playing = true; btn.textContent = '❚❚'; wrap.classList.add('on');
+    if (!aiFailed) {
+      try {
+        if (!audio) {
+          info.textContent = '음성 준비 중…';
+          const r = await getAI();
+          audio = new Audio(r.url); audio.onended = done; audio.onerror = () => { aiFailed = true; badge.textContent = '🔈 기본 음성'; basic(); };
+          if (r.fresh) note.textContent = '처음 듣는 문제라 음성을 새로 만들었어요. 저장해 두어서 다음부터는 바로 재생돼요.';
+        }
+        if (!playing) return; // 준비 중에 멈춤을 누름
+        info.textContent = exam ? '한 번만 재생' : '';
+        TTS.stop(); TTS.cur = audio; audio.currentTime = 0; audio.playbackRate = rate;
+        await audio.play();
+        return;
+      } catch (e) {
+        aiFailed = true; badge.textContent = '🔈 기본 음성'; info.textContent = exam ? '한 번만 재생' : '';
+        note.textContent = e?.code === 'billing' ? 'AI 음성은 Gemini 결제(선불 충전)가 필요해요. 지금은 이 기기의 음성으로 들려줘요.' : 'AI 음성을 만들지 못해서 이 기기의 음성으로 대신 들려줘요. 문제는 그대로 풀 수 있어요.';
+        if (!playing) return;
+      }
+    }
+    basic();
+  };
+  wrap.append(btn, wave, h('div', { class: 'pside' }, badge, info, sp));
+  outer.append(note);
+  return outer;
 }
 function scriptBox(q) {
   return h('div', { class: 'script' }, h('b', {}, '스크립트'), ...(q.script || []).map(l => h('div', { lang: 'ja', html: esc(l.s && l.s !== 'N' ? l.s + '：' : '') + fmtPrompt(q.rule ? l.t : autoFuri(l.t)) })));

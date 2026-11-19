@@ -1104,6 +1104,7 @@ function renderSettings(v) {
     } }, unchk.length ? `검수 안 한 문제 ${unchk.length}개 검수` : '모두 검수했어요');
     var bankBox = h('div', { class: 'subbox' }, h('h3', { class: 'mini' }, '문제 은행 검수'), h('p', { class: 'muted sm' }, 'AI가 만든 문제 중 문장이 틀어지거나 정답이 둘인 문제를 찾아 고치거나 빼요. 새로 만드는 문제는 자동으로 검수돼요.'), info, h('div', { class: 'row end' }, go), prog);
   }
+  right.append(voiceCard());
   right.append(card('AI 연결', '', h('p', { class: 'muted sm' }, '문제 만들기가 안 될 때 눌러 보세요. 키·함수·모델 중 어디가 문제인지 보여줘요.'), h('div', { class: 'row end' }, tbtn), out, bankBox));
 
   // 6. 백업 · 로그아웃
@@ -1120,4 +1121,48 @@ function renderSettings(v) {
       h('button', { class: 'btn ghost sm', onclick: async e => { const done = busy(e.currentTarget, '내보내는 중…'); try { await flushSaves(); const rows = await App.db.exportAll(); const blob = new Blob([JSON.stringify({ app: 'jp-study', at: new Date().toISOString(), docs: rows })], { type: 'application/json' }); const a = h('a', { href: URL.createObjectURL(blob), download: `공부방-백업-${App.today}.json` }); document.body.append(a); a.click(); a.remove(); App.state.lastBackup = App.today; saveState(); } catch { toast('내보내기에 실패했어요.', 'err'); } finally { done(); } } }, '백업 내려받기'),
       h('button', { class: 'btn ghost sm', onclick: () => impIn.click() }, '백업 불러오기'), impIn,
       App.signOut ? h('button', { class: 'btn ghost sm', onclick: () => App.signOut() }, '로그아웃') : null)));
+}
+
+/* 설정 → 음성 설정: 청해 AI 음성(Gemini) / 기본 음성(이 기기) */
+function voiceCard() {
+  const pref = voicePrefs();
+  const setPref = (k, v) => { App.state.voice = Object.assign({}, App.state.voice || {}, { [k]: v }); saveState(); flushSaves(); };
+  const optBox = h('div', { class: 'vopt' });
+  const drawOpt = () => {
+    optBox.innerHTML = '';
+    const cur = voicePrefs().mode;
+    optBox.append(...[['ai', '🎧 AI 음성 (Gemini)', '실제 시험처럼 남녀가 대화해요. 한 번 만들면 저장해서 다시 써요.'], ['basic', '🔈 기본 음성', '이 기기에 들어 있는 음성. 무료, 바로 재생.']].map(([k, t, d]) =>
+      h('button', { class: cur === k ? 'on' : '', onclick: () => { setPref('mode', k); drawOpt(); } }, h('b', {}, t), h('small', {}, d))));
+  };
+  drawOpt();
+  const speed = h('select', { onchange: () => { setPref('speed', +speed.value); toast('말하기 속도를 바꿨어요. 새로 듣는 문제부터 적용돼요.'); } },
+    [[5, 'N5 · 천천히 또박또박'], [4, 'N4 · 조금 천천히'], [3, 'N3 · 자연스러운 대화 속도 (기본)'], [2, 'N2 · 보통 회화 속도']].map(([k, n]) => h('option', { value: k, selected: k === pref.speed }, n)));
+  const stat = h('div', { class: 'vstat' }, h('div', { class: 'muted sm' }, '사용량 불러오는 중…'));
+  audioUsage().then(u => { stat.innerHTML = ''; stat.append(...[['이번 달 만든 음성', u.n + '개'], ['길이', u.sec > 0 && u.sec < 60 ? '1분 미만' : '약 ' + Math.round(u.sec / 60) + '분'], ['예상 비용', '약 $' + u.cost.toFixed(2)]].map(([a, b]) => h('div', {}, h('small', {}, a), h('b', {}, b)))); }).catch(() => { stat.innerHTML = ''; });
+  const res = h('div', { class: 'muted sm' });
+  const test = h('button', { class: 'btn ghost sm', onclick: async () => {
+    if (!App.sample?.tts) { res.textContent = 'AI 연결이 아직 설정되지 않았어요.'; return; }
+    const done = busy(test, '음성 만드는 중…');
+    try {
+      const r = await App.sample.tts([{ s: '女', t: 'すみません、駅までの道を教えてください。' }, { s: '男', t: 'この道をまっすぐ行って、二つ目の角を右に曲がってください。' }], { save: false, style: ttsStyle() });
+      const a = new Audio('data:audio/wav;base64,' + r.audio); TTS.stop(); TTS.cur = a; a.play();
+      res.textContent = `✓ 성공 · ${r.model} · 목소리 ${(r.voices || []).join(' / ')} · ${r.sec}초`;
+    } catch (e) { res.textContent = (e?.code === 'billing' ? '✕ ' : '✕ ') + aiErrorText(e); }
+    finally { done(); }
+  } }, '▶ AI 음성 테스트');
+  // 기본 음성 고르기
+  const vsel = male => {
+    const list = TTS.ranked(male);
+    const cur = TTS.pick(male);
+    const sel = h('select', { onchange: () => setPref(male ? 'm' : 'f', sel.value) }, list.length ? list.map((v, i) => h('option', { value: v.name, selected: cur && v.name === cur.name }, v.name + (i === 0 && TTS.score(v) >= 4 ? ' ★추천' : ''))) : [h('option', { value: '' }, '이 기기에 일본어 음성이 없어요')]);
+    const pv = h('button', { class: 'btn ghost sm', onclick: () => TTS.speak([{ s: male ? '男' : '女', t: male ? 'この道をまっすぐ行ってください。' : 'すみません、駅はどこですか。' }]) }, '▶ 미리 듣기');
+    return h('div', { class: 'vrow' }, h('span', {}, male ? '남자' : '여자'), sel, pv);
+  };
+  const natural = TTS.voices.some(v => TTS.score(v) >= 4);
+  return card('음성 설정', '청해 · 단어 듣기', h('div', { class: 'vset' },
+    h('div', { class: 'vlab' }, '① 청해 문제 음성'), optBox,
+    h('div', { class: 'vlab' }, '말하기 속도 (AI 음성)'), speed,
+    stat, h('div', { class: 'row end' }, test), res,
+    h('div', { class: 'vlab' }, '② 기본 음성 (단어 🔈 듣기 · AI 음성이 안 될 때)'), vsel(false), vsel(true),
+    h('p', { class: 'muted sm' }, natural ? '★ 자연스러운 음성을 자동으로 먼저 골라요.' : '이 브라우저에는 자연스러운 일본어 음성이 적어요. 엣지(Edge) 브라우저에서 열면 Nanami·Keita 같은 자연스러운 음성을 무료로 쓸 수 있어요.')));
 }

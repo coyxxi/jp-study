@@ -435,6 +435,7 @@ function aiErrorText(e) {
   if (c === 'invalid_json') return 'AI 응답을 읽지 못했어요. 다시 시도해 주세요. (설정 → AI 연결 테스트에서 원문을 볼 수 있어요)';
   if (c === 'truncated') return 'AI 답이 너무 길어 중간에 잘렸어요. 문항 수를 줄여 다시 시도해 주세요.';
   if (c === 'empty') return 'AI가 쓸 수 있는 문제를 만들지 못했어요. 다시 시도해 주세요.';
+  if (c === 'billing') return 'AI 음성은 Gemini 결제(선불 충전)가 필요해요. AI Studio → 설정 → Billing에서 충전하면 바로 쓸 수 있어요. 그동안은 기본 음성으로 들려줘요.';
   if (c === 'cancelled') return '취소했어요.';
   if (c === 'images_unavailable' || c === 'image_rejected') return '이 사진은 AI에 보낼 수 없어요. 다른 사진으로 해 주세요.';
   return 'AI 요청에 실패했어요 (' + (c || 'error') + ').';
@@ -804,20 +805,28 @@ function ruleQ(id, mode) {
 
 /* ---------- TTS ---------- */
 const TTS = {
-  voices: [], ready: false,
+  voices: [], ready: false, cur: null,
   init() {
     if (!('speechSynthesis' in window)) return;
     const load = () => { this.voices = speechSynthesis.getVoices().filter(v => /ja/i.test(v.lang)); this.ready = true; };
     load(); speechSynthesis.onvoiceschanged = load;
   },
   available() { return 'speechSynthesis' in window; },
-  stop() { try { speechSynthesis.cancel(); } catch { } },
+  stop() { try { speechSynthesis.cancel(); } catch { } try { if (this.cur) { this.cur.pause(); this.cur = null; } } catch { } },
+  // 자연스러운 음성(Natural·Online·Neural·Google)을 먼저 골라요. 설정에서 직접 고른 목소리가 있으면 그걸로
+  score(v) { const n = v.name || ''; return (/natural|online|neural/i.test(n) ? 4 : 0) + (/google/i.test(n) ? 2 : 0) + (/nanami|keita|aoi|daichi|mayu|naoki|shiori/i.test(n) ? 1 : 0) + (v.localService === false ? 1 : 0); },
+  isMale(v) { return /otoya|ichiro|keita|daichi|naoki|male|男/i.test(v.name || '') && !/female/i.test(v.name || ''); },
+  ranked(male) { return this.voices.filter(v => male ? this.isMale(v) : !this.isMale(v)).sort((a, b) => this.score(b) - this.score(a)); },
+  pick(male) {
+    const want = (App.state?.voice || {})[male ? 'm' : 'f'];
+    return (want && this.voices.find(v => v.name === want)) || this.ranked(male)[0] || null;
+  },
   speak(lines, rate = 1, onDone) {
     this.stop();
     if (!this.available()) { onDone && onDone(false); return; }
     const vs = this.voices;
-    const female = vs.find(v => /kyoko|haruka|nanami|ayumi|female|女/i.test(v.name)) || vs[0];
-    const male = vs.find(v => /otoya|ichiro|keita|male|男/i.test(v.name) && v !== female) || vs[1] || vs[0];
+    const female = this.pick(false) || vs[0];
+    const male = this.pick(true) || vs.find(v => v !== female) || vs[0];
     let i = 0;
     const next = () => {
       if (i >= lines.length) { onDone && onDone(true); return; }
@@ -835,6 +844,47 @@ const TTS = {
     next();
   },
 };
+
+/* ---------- 청해 AI 음성 (Gemini TTS) ----------
+   처음 재생할 때 한 번만 만들고, 저장소에 보관해서 다음부터는 바로 재생해요. (state/audio 에 목록) */
+const VOICE_SPEED = {
+  5: 'JLPT N5の聴解問題のように、ゆっくり、はっきりと話す',
+  4: 'JLPT N4の聴解問題のように、少しゆっくり、はっきりと話す',
+  3: 'JLPT N3の聴解問題のように、自然な会話の速さで、はっきりと話す',
+  2: 'JLPT N2の聴解問題のように、ふつうの会話の速さで自然に話す',
+};
+function voicePrefs() { return Object.assign({ mode: 'ai', speed: 3 }, App.state?.voice || {}); }
+function ttsStyle() { return VOICE_SPEED[voicePrefs().speed] || VOICE_SPEED[3]; }
+function hashStr(str) { let a = 0x811c9dc5, b = 5381; for (const ch of str) { const x = ch.codePointAt(0); a = Math.imul(a ^ x, 16777619) >>> 0; b = (Math.imul(b, 33) ^ x) >>> 0; } return a.toString(36) + b.toString(36); }
+function ttsKey(script) { return 'v1n' + voicePrefs().speed + '_' + hashStr(JSON.stringify(script.map(l => [l.s, plainJa(l.t)]))); }
+let audioIdxP = null;
+function audioIndex() {
+  if (!audioIdxP) audioIdxP = App.db ? App.db.doc('state/audio').get().then(sn => (sn.exists ? (sn.data().items || {}) : {})).catch(() => { audioIdxP = null; return {}; }) : Promise.resolve({});
+  return audioIdxP;
+}
+const audioMaking = {};
+async function aiAudioFor(script) {
+  if (!App.sample?.tts) throw { code: 'not_granted' };
+  const key = ttsKey(script);
+  const idx = await audioIndex();
+  let rec = idx[key], fresh = false;
+  if (!rec) {
+    // 같은 문제를 동시에 두 번 만들지 않게
+    if (!audioMaking[key]) audioMaking[key] = App.sample.tts(script.map(l => ({ s: l.s, t: plainJa(l.t) })), { key, style: ttsStyle() })
+      .then(r => { const x = { p: r.path, s: r.sec || 0, at: App.today, m: r.model || '' }; idx[key] = x; mergeWrite('state/audio', cur => ({ items: Object.assign({}, cur?.items || {}, { [key]: x }) })).catch(() => {}); return x; })
+      .finally(() => { delete audioMaking[key]; });
+    rec = await audioMaking[key]; fresh = true;
+  }
+  return { url: await App.sample.audioUrl(rec.p), fresh, sec: rec.s };
+}
+async function audioUsage(month) {
+  month = month || App.today.slice(0, 7);
+  const idx = await audioIndex();
+  const list = Object.values(idx).filter(r => String(r.at || '').startsWith(month));
+  const sec = list.reduce((a, r) => a + (r.s || 0), 0);
+  const rate = App.today < '2027-01-01' ? 0.0135 : 0.027; // 1분당 대략 (2027년부터 2배)
+  return { n: list.length, sec, cost: sec / 60 * rate, total: Object.keys(idx).length };
+}
 
 /* ---------- db load ---------- */
 async function loadAll() {

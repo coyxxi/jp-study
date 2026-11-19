@@ -76,7 +76,7 @@ function buildDay() {
   const unseen = q => !q.seen;
   let lessonQ = last ? bankQuestions((q, b) => b.source === last.id && q.area !== 'l' && unseen(q)) : [];
   if (lessonQ.length < 6) lessonQ = lessonQ.concat(bankQuestions(q => q.area !== 'l' && unseen(q) && !lessonQ.find(x => x.id === q.id)));
-  const drill = shuffle(App.drill.filter(d => (d.ok || 0) < 2 && !d.del)).slice(0, 3).map(d => d.id);
+  const drill = shuffle(App.drill.filter(d => !drillDone(d) && !d.del)).slice(0, 3).map(d => d.id);
   return {
     date: App.today, round: 1, due,
     sec: {
@@ -675,7 +675,7 @@ function renderTalk(v, sub = 'drill') {
   const fromLabel = { lesson: '수업', memo: '모임', ai: 'AI', role: '롤플레이' };
   listCard.querySelector('h2').append(h('button', { class: 'btn ghost sm', title: '내 문장과 수업 예문의 오타를 AI로 찾아 고쳐요', onclick: () => typoCheck() }, '🔍 오타 검사'));
   listCard.append(h('p', { class: 'muted sm' }, '문장을 누르면 고치거나 지울 수 있어요.'));
-  for (const d of [...App.drill].filter(d => !d.del).reverse().slice(0, 80)) listCard.append(h('div', { class: 'drow click', onclick: () => editDrill(d, () => nav('talk', 'drill')) }, h('div', {}, h('div', {}, d.ko), h('small', { lang: 'ja', class: 'muted' }, d.jp)), h('span', { class: 'chip ' + ((d.ok || 0) >= 2 ? 'c-green' : 'c-gray') }, (d.ok || 0) >= 2 ? '익힘' : fromLabel[d.from] || '')));
+  for (const d of [...App.drill].filter(d => !d.del).reverse().slice(0, 80)) listCard.append(h('div', { class: 'drow click', onclick: () => editDrill(d, () => nav('talk', 'drill')) }, h('div', {}, h('div', {}, d.ko), h('small', { lang: 'ja', class: 'muted' }, d.jp)), h('div', { class: 'drside' }, drillDone(d) ? null : h('span', { class: 'chip c-gray' }, drillOk(d) ? `${drillOk(d)}/${DRILL_DONE}` + (fromLabel[d.from] ? ' · ' + fromLabel[d.from] : '') : fromLabel[d.from] || ''), drillMToggle(d, () => nav('talk', 'drill')))));
   if (!App.drill.length) listCard.append(h('div', { class: 'muted' }, '수업을 기록하거나 모임 메모를 저장하면 문장이 쌓여요.'));
   right.append(listCard);
 }
@@ -744,7 +744,7 @@ ${list}`, { modelTier: 'quick' });
     } }, '체크한 것 반영')));
 }
 function drillRunner(root, ids, onDone, onExit, lkHost) {
-  let list = ids ? ids.map(id => App.drill.find(d => d.id === id)).filter(d => d && !d.del) : shuffle(App.drill.filter(d => (d.ok || 0) < 2 && !d.del)).slice(0, 5);
+  let list = ids ? ids.map(id => App.drill.find(d => d.id === id)).filter(d => d && !d.del) : shuffle(App.drill.filter(d => !drillDone(d) && !d.del)).slice(0, 5);
   root.innerHTML = '';
   if (!list.length) { root.append(h('div', { class: 'empty' }, '연습할 작문 문장이 없어요.', h('br'), h('span', { class: 'muted' }, '수업을 기록하거나 "AI로 5문장 추가"를 눌러 주세요.')), ...(onExit ? [h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: onDone }, '완료로 표시'))] : [])); return; }
   let i = 0;
@@ -762,7 +762,7 @@ function drillRunner(root, ids, onDone, onExit, lkHost) {
     const out = h('div');
     const chk = h('button', { class: 'btn', onclick: () => check() }, '확인');
     const koEl = h('div', { class: 'drillko' }, d.ko);
-    root.append(koEl, h('button', { class: 'linkbtn sm', onclick: () => editDrill(d, () => { koEl.textContent = d.ko; }) }, '✏️ 문장 고치기'), inp, h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => reveal(null) }, '모르겠어요'), chk), out);
+    root.append(koEl, h('div', { class: 'row tight gap' }, h('button', { class: 'linkbtn sm', onclick: () => editDrill(d, () => { koEl.textContent = d.ko; }) }, '✏️ 문장 고치기'), h('button', { class: 'linkbtn sm', title: '이미 아는 문장이면 출제에서 빼요', onclick: () => { setDrillDone(d, true); toast('익힘으로 바꿨어요. 이 문장은 이제 출제에서 빠져요.'); if (i < list.length - 1) { i++; show(); } else { flushSaves(); onDone && onDone(); } } }, '✓ 이미 알아요 (익힘)')), inp, h('div', { class: 'row end' }, h('button', { class: 'btn ghost', onclick: () => reveal(null) }, '모르겠어요'), chk), out);
     setTimeout(() => inp.focus(), 50);
     async function check() {
       const a = inp.value.trim(); if (!a) { reveal(null); return; }
@@ -785,7 +785,7 @@ function drillRunner(root, ids, onDone, onExit, lkHost) {
         r && !ok && r.fixed ? h('div', { class: 'big', lang: 'ja' }, r.fixed) : null,
         r?.why ? h('div', {}, r.why) : null,
         h('div', { class: 'model' }, '모범 답안: ', jp(d.jp), h('button', { class: 'say', onclick: () => TTS.speak([{ s: 'N', t: d.jp }]) }, '🔈'))));
-      const mark = good => { d.ok = good ? (d.ok || 0) + 1 : 0; d.ng = good ? (d.ng || 0) : (d.ng || 0) + 1; d.last = App.today; markDirty('drill'); if (i < list.length - 1) { i++; show(); } else { flushSaves(); onDone && onDone(); } };
+      const mark = good => { const before = drillOk(d); d.okt = before + (good ? 1 : 0); d.ok = good ? (d.ok || 0) + 1 : 0; if (good && d.okt === DRILL_DONE) toast('이 문장은 3번 맞혀서 익힘이 됐어요. 이제 출제에서 빠져요.'); d.ng = good ? (d.ng || 0) : (d.ng || 0) + 1; d.last = App.today; markDirty('drill'); if (i < list.length - 1) { i++; show(); } else { flushSaves(); onDone && onDone(); } };
       out.append(h('div', { class: 'row end' }, ok === null ? h('button', { class: 'btn ghost', onclick: () => mark(false) }, '✕ 못 했어요') : null, ok === null ? h('button', { class: 'btn', onclick: () => mark(true) }, '○ 맞았어요') : h('button', { class: 'btn', onclick: () => mark(ok) }, i < list.length - 1 ? '다음 →' : '완료')));
     }
   };
@@ -1165,4 +1165,15 @@ function voiceCard() {
     stat, h('div', { class: 'row end' }, test), res,
     h('div', { class: 'vlab' }, '② 기본 음성 (단어 🔈 듣기 · AI 음성이 안 될 때)'), vsel(false), vsel(true),
     h('p', { class: 'muted sm' }, natural ? '★ 자연스러운 음성을 자동으로 먼저 골라요.' : '이 브라우저에는 자연스러운 일본어 음성이 적어요. 엣지(Edge) 브라우저에서 열면 Nanami·Keita 같은 자연스러운 음성을 무료로 쓸 수 있어요.')));
+}
+
+/* 작문 문장 익힘 표시: 켜면 출제에서 빠지고, 끄면 다시 나와요 */
+function setDrillDone(d, on) {
+  if (on) { d.okt = Math.max(drillOk(d), DRILL_DONE); d.mk = 1; }
+  else { d.okt = 0; d.ok = 0; delete d.mk; }
+  d.last = App.today; markDirty('drill'); flushSaves();
+}
+function drillMToggle(d, after) {
+  const on = drillDone(d);
+  return h('span', { class: 'mtoggle' + (on ? ' on' : ''), role: 'button', title: on ? '익힘 해제 (다시 출제)' : '아는 문장 → 익힘으로 (출제에서 빼기)', onclick: e => { e.stopPropagation(); setDrillDone(d, !on); toast(on ? '익힘을 해제했어요. 다시 출제돼요.' : '익힘으로 바꿨어요. 출제에서 빠져요.'); after && after(); } }, on ? '✓ 익힘' : '익힘으로');
 }

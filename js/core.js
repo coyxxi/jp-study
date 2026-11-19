@@ -234,12 +234,16 @@ async function flushWrong() {
   App.wrong = clone(merged.list).concat(extra);
   App.base.wrongLen = merged.list.length;
 }
+/* 순간 작문: 연속이든 띄엄띄엄이든 모두 3번 맞히면 '익힘' → 출제에서 빠져요 (okt = 맞힌 횟수 합계, 예전 기록은 ok로 계산) */
+const DRILL_DONE = 3;
+function drillOk(d) { return d.okt ?? d.ok ?? 0; }
+function drillDone(d) { return drillOk(d) >= DRILL_DONE; }
 /* 순간 작문 목록이 400개를 넘으면: 두 번 맞힌(외운) 문장 중 오래된 것부터 정리, 못 맞힌 문장은 남겨요 */
 function trimDrill(list, max = 400) {
   if (list.length <= max) return list;
   let over = list.length - max;
   const drop = new Set();
-  for (const d of list) { if (over <= 0) break; if ((d.ok || 0) >= 2) { drop.add(d.id); over--; } }
+  for (const d of list) { if (over <= 0) break; if (drillDone(d)) { drop.add(d.id); over--; } }
   const kept = list.filter(d => !drop.has(d.id));
   return kept.length > max * 1.5 ? kept.slice(-max * 1.5) : kept; // 그래도 너무 많으면(600개 초과) 오래된 것부터
 }

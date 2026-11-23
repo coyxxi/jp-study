@@ -68,8 +68,9 @@ function studyVocab(v) {
           h('button', { class: 'btn sm', disabled: !rows.length, onclick: () => { const o = overlay('단어 카드'); flashcards(o.body, priority(ids.filter(id => status(id) !== 'm')).slice(0, 30), { onExit: o.close, onDone: () => { o.close(); nav('study', 'vocab'); } }); } }, '카드로 외우기'),
           h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => {
             // 익힘은 빼고 (확인할 날이 된 것만 포함) 골고루
-            const pool = ids.filter(id => status(id) !== 'm' || (P(id)?.nx || '') <= App.today);
-            const o = overlay('단어 퀴즈'); runQuiz(o.body, priority(pool.length ? pool : ids).slice(0, 15).map(id => ruleQ(id)), { onExit: o.close, onDone: () => { o.close(); nav('study', 'vocab'); } });
+            const pool = ids.filter(id => status(id) !== 'm'); // 익힘은 빼요
+            if (!pool.length) return toast('익힘이 아닌 단어가 없어요. 다시 볼 단어는 상태를 학습 중으로 바꿔 주세요.');
+            const o = overlay('단어 퀴즈'); runQuiz(o.body, priority(pool).slice(0, 15).map(id => ruleQ(id)), { onExit: o.close, onDone: () => { o.close(); nav('study', 'vocab'); } });
           } }, '퀴즈 15문항')));
       if (!rows.length) grid.append(h('div', { class: 'empty sm' }, '조건에 맞는 단어가 없어요.'));
     }

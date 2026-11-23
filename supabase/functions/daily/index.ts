@@ -131,10 +131,10 @@ async function runFor(admin: Any, uid: string, state: Any, today: string, hm: st
     const lessons = pick("lessons/").map((r) => r.data).sort((a, b) => String(b.date).localeCompare(String(a.date)));
     const L = lessons[0] && lessons[0].date >= addDays(today, -14) ? lessons[0] : null;
     const ids = new Set<string>();
-    if (L) for (const id of shuffle([...(L.grammarIds ?? []), ...(L.vocabIds ?? [])]).slice(0, 8)) ids.add(id);
-    const due = Object.entries(prog).filter(([id, p]: Any) => byId.has(id) && p.nx && p.nx <= today && p.s !== "n").map(([id]) => id);
+    if (L) for (const id of shuffle([...(L.grammarIds ?? []), ...(L.vocabIds ?? [])].filter((id) => st(id) !== "m")).slice(0, 8)) ids.add(id);
+    const due = Object.entries(prog).filter(([id, p]: Any) => byId.has(id) && p.nx && p.nx <= today && p.s !== "n" && p.s !== "m").map(([id]) => id);
     for (const id of shuffle(due).slice(0, 5)) ids.add(id);
-    const wrong = Object.entries(prog).filter(([id, p]: Any) => byId.has(id) && p.lw && p.lw >= addDays(today, -7)).map(([id]) => id);
+    const wrong = Object.entries(prog).filter(([id, p]: Any) => byId.has(id) && p.s !== "m" && p.lw && p.lw >= addDays(today, -7)).map(([id]) => id);
     for (const id of shuffle(wrong).slice(0, 4)) ids.add(id);
     const lv = [...grammar, ...vocab].filter((i) => (i.l || level) === level);
     for (const i of shuffle(lv.filter((i) => ["a", "l"].includes(st(i.id))))) { if (ids.size >= 15) break; ids.add(i.id); }

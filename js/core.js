@@ -300,7 +300,7 @@ function setStatus(id, s) {
 }
 /* 익힘 규칙
    - 서로 다른 시험(2시간 이상 떨어진 시험)에서 3번 연속 맞히면 익힘 (아침·점심·저녁 세 번이면 그날 익힘)
-   - 익힘 뒤에는 3일 → 7일 → 15일 → 30일 뒤에 확인 문제가 나오고, 틀리면 다시 "학습 중"
+   - 익힘이 된 항목은 더 이상 문제로 나오지 않아요 (잊었으면 단어장에서 미학습·학습 중으로 바꾸면 다시 나와요)
    - 같은 시험 안에서 다시 맞힌 건 세지 않아요 */
 const SESSION_GAP = 2 * 3600e3; const L_INTERVALS = [1, 2, 4];
 const M_INTERVALS = [3, 7, 15, 30];
@@ -394,13 +394,13 @@ function weeklyAccuracy(weeks = 6) {
 }
 function dueCount() {
   const t = App.today; let n = 0;
-  for (const chunk of Object.values(App.prog)) for (const [id, p] of Object.entries(chunk)) if (p.nx && p.nx <= t && p.s !== 'n' && App.byId[id] && !App.alias[id]) n++;
+  for (const chunk of Object.values(App.prog)) for (const [id, p] of Object.entries(chunk)) if (p.nx && p.nx <= t && p.s !== 'n' && p.s !== 'm' && App.byId[id] && !App.alias[id]) n++;
   return n;
 }
 function dueItems(limit = 12) {
   const t = App.today, out = [];
   for (const chunk of Object.values(App.prog)) for (const [id, p] of Object.entries(chunk)) {
-    if (p.nx && p.nx <= t && p.s !== 'n' && App.byId[id] && !App.alias[id]) out.push(id);
+    if (p.nx && p.nx <= t && p.s !== 'n' && p.s !== 'm' && App.byId[id] && !App.alias[id]) out.push(id);
   }
   out.sort((a, b) => (P(a).nx || '').localeCompare(P(b).nx || ''));
   return out.slice(0, limit);
@@ -519,9 +519,12 @@ async function archiveOldBanks() {
     } catch { break; }
   }
 }
+/* 익힘 항목만 묻는 문제는 빼요 (문법·단어 섞인 문제는 하나라도 익힘이 아니면 그대로) */
+const isMastered = id => status(canon(id)) === 'm';
+const onlyMastered = q => Array.isArray(q.items) && q.items.length > 0 && q.items.every(isMastered);
 function bankQuestions(filter = () => true) {
   const out = [];
-  for (const b of App.banks) for (const q of b.qs || []) if (!q.bad && filter(q, b)) out.push(Object.assign({ bank: b.id }, q));
+  for (const b of App.banks) for (const q of b.qs || []) if (!q.bad && !onlyMastered(q) && filter(q, b)) out.push(Object.assign({ bank: b.id }, q));
   return out;
 }
 function markSeen(q, ok) {
@@ -852,6 +855,7 @@ function noteMode(q) {
   const p = P(q.items[0]); if (m && p) p.qm = m;
 }
 function ruleQ(id, mode) {
+  if (isMastered(id)) return null; // 익힘은 문제로 안 내요
   const q = vocabQuestion(id, mode);
   if (q && !q.choices && q._pool) return finishRule(q);
   return q;

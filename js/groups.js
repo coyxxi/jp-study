@@ -108,7 +108,7 @@ function kanjiGroupQuestions(g, max = 8) {
   const allMeanings = App.M.kanji.filter(k => k.l >= 2).map(k => k.m);
   for (const k of shuffle(ks)) {
     const others = ks.filter(x => x !== k);
-    const word = groupWords(k.c, 3).find(w => /[一-龯]/.test(w.w));
+    const word = groupWords(k.c, 4).find(w => /[一-龯]/.test(w.w) && status(w.id) !== 'm'); // 익힘 단어는 예시 문제에 안 써요
     // ① 표기: 읽기를 보고 같은 묶음 한자 중 맞는 글자 고르기
     if (word) {
       const variants = [...new Set(others.map(o => word.w.split(k.c).join(o.c)))].filter(v => v !== word.w);

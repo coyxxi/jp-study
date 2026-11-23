@@ -80,7 +80,7 @@ function buildReview(kanjiGid) {
   // ① 내가 추가한 단어 (먼저)
   take('add', rows.filter(([, p]) => p.add && p.s !== 'm').sort((a, b) => String(a[1].add).localeCompare(String(b[1].add))).map(([id]) => id), REVIEW_MIX.add);
   // ② 복습할 때 된 것: 오래 밀릴수록·많이 틀릴수록 먼저, 어제 나온 건 뒤로, 같은 점수는 섞어서
-  const dueRows = rows.filter(([id, p]) => p.nx && p.nx <= t && p.s !== 'n' && !used.has(id));
+  const dueRows = rows.filter(([id, p]) => p.nx && p.nx <= t && p.s !== 'n' && p.s !== 'm' && !used.has(id));
   const score = ([, p]) => daysBetween(p.nx, t) + (p.w || 0) * 0.7 - (shownYest(p) ? 3 : 0) + Math.random() * 1.5;
   take('due', dueRows.map(r => [r[0], score(r)]).sort((a, b) => b[1] - a[1]).map(x => x[0]), REVIEW_MIX.due);
   // ③ 요즘 공부한 한자가 들어간 단어 (아직 익힘 아닌 것, 오래 안 나온 것부터)
@@ -671,7 +671,7 @@ function renderTest(v, sub) {
   }
   function mockIntro(el) {
     const L = targetLevel();
-    const vq = () => shuffle(allVocab().filter(v => v.l === L && /[一-龯]/.test(v.w))).slice(0, 15).map((v, i) => ruleQ(v.id, ['read', 'read', 'write', 'mean', 'read'][i % 5]));
+    const vq = () => shuffle(allVocab().filter(v => v.l === L && /[一-龯]/.test(v.w) && status(v.id) !== 'm')).slice(0, 15).map((v, i) => ruleQ(v.id, ['read', 'read', 'write', 'mean', 'read'][i % 5]));
     const gb = bankQuestions(q => (q.area === 'g' || q.area === 'r'));
     const lb = bankQuestions(q => q.area === 'l');
     el.append(h('h2', {}, `N${L} 진단 모의고사`), h('p', { class: 'muted' }, '문자·어휘 15 · 문법·독해 15 · 청해 10 · 제한 시간 40분. 실전 모드라 정답은 마지막에 한꺼번에 보여줘요.'),

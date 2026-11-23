@@ -1,7 +1,7 @@
 /* 일본어 공부방 · quiz runner */
 'use strict';
 function fmtPrompt(s) {
-  return esc(s).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '<ruby>$1<rt>$2</rt></ruby>').replace(/\[u\]([\s\S]*?)\[\/u\]/g, '<u class="tgt">$1</u>').replace(/★/g, '<span class="star">★</span>').replace(/\n/g, '<br>');
+  return esc(cleanFuri(s)).replace(/\{([^{}|]+)\|([^{}|]+)\}/g, '<ruby>$1<rt>$2</rt></ruby>').replace(/\[u\]([\s\S]*?)\[\/u\]/g, '<u class="tgt">$1</u>').replace(/★/g, '<span class="star">★</span>').replace(/\n/g, '<br>');
 }
 function qRef(q) { return q.bank ? { bank: q.bank, id: q.id } : { ...q }; }
 function resolveRef(r) {

@@ -176,7 +176,7 @@ async function runFor(admin: Any, uid: string, state: Any, today: string, hm: st
     // 후리가나 읽기 맞추기 (단어장에 읽기가 하나뿐인 단어)
     const rm = new Map<string, Set<string>>();
     for (const v of vocab) { if (!/[一-龯]/.test(v.w) || !v.r) continue; const k = String(v.w).split(/[;；]/)[0].trim(); if (!rm.has(k)) rm.set(k, new Set()); rm.get(k)!.add(String(v.r).split(/[;；]/)[0].trim()); }
-    const fix = (t: string) => t.replace(/\{([^{}|]+)\|([^{}|]+)\}/g, (all, k, r) => { const s = rm.get(k); if (s && s.size === 1) { const only = [...s][0]; if (only !== r && /^[぀-ゟ]+$/.test(only)) return `{${k}|${only}}`; } return all; });
+    const fix = (t: string) => t.replace(/\{([^{}|]+)\|([^{}|]+)\}/g, (all, k, r) => { if (k.length === 1) return all; const s = rm.get(k); if (s && s.size === 1) { const only = [...s][0]; if (only !== r && /^[぀-ゟ]+$/.test(only)) return `{${k}|${only}}`; } return all; });
     // 6문항씩 나눠 동시에 요청
     const batches: Record<string, number>[] = []; let cur: Record<string, number> = {}, n = 0;
     for (const [k, c0] of Object.entries(counts)) { let c = c0; while (c > 0) { const t = Math.min(c, 6 - n); cur[k] = (cur[k] ?? 0) + t; n += t; c -= t; if (n >= 6) { batches.push(cur); cur = {}; n = 0; } } }

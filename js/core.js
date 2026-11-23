@@ -582,8 +582,15 @@ function readMap() {
   for (const v of allVocab()) { if (!/[\u4e00-\u9faf]/.test(v.w) || !v.r) continue; const k = v.w.split(/[;；]/)[0].trim(); if (!m.has(k)) m.set(k, new Set()); m.get(k).add(v.r.split(/[;；]/)[0].trim()); }
   return (_readMap = m);
 }
+// 한 글자 한자는 문맥에 따라 읽기가 달라서(一日中의 中=じゅう, 授業中=ちゅう) 단어장 읽기로 바꾸지 않아요
+const AMBIG_K = new Set([...'中日月年人間前後上下方分時生物家所内外目気行入出来']);
 function fixFuri(t) {
-  return String(t || '').replace(FURI_RE, (all, k, r) => { const set = readMap().get(k); if (set && set.size === 1) { const only = [...set][0]; if (only !== r && /^[\u3040-\u309f]+$/.test(only)) return `{${k}|${only}}`; } return all; });
+  return cleanFuri(String(t || '').replace(FURI_RE, (all, k, r) => { if (k.length === 1) return all; const set = readMap().get(k); if (set && set.size === 1) { const only = [...set][0]; if (only !== r && /^[\u3040-\u309f]+$/.test(only)) return `{${k}|${only}}`; } return all; }));
+}
+/* 이미 저장된 문제의 잘못된 한 글자 읽기 정리: 빈칸·다른 한자·숫자 바로 뒤에 붙은 中·日·間 같은 접미 한자는
+   읽기가 달라질 수 있어서(一日中=じゅう) 후리가나를 떼고 한자만 보여줘요 */
+function cleanFuri(t) {
+  return String(t || '').replace(/(（[^（）]*）|\([^()]*\)|[一-龯々〇0-9０-９]|\})\{([^{}|])\|[^{}|]+\}/g, (all, pre, k) => AMBIG_K.has(k) ? pre + k : all);
 }
 // 후리가나가 없는 예전 문제에도 단어장 읽기로 자동 표시 (읽기가 한 가지뿐인 한자 묶음만)
 let _kanjiRead = null;
@@ -616,6 +623,7 @@ function autoFuri(t) {
       let hit = false;
       for (let n = Math.min(blockLen, 6); n >= 1; n--) {
         if (n === 1 && blockLen > 1) break; // 한 글자 읽기는 그 한자가 혼자 쓰일 때만 (日本人의 人 같은 오독 방지)
+        if (n === 1 && AMBIG_K.has(seg[j]) && /[）)一-龯々〇0-9０-９}]/.test(j > 0 ? seg[j - 1] : (i > 0 ? '}' : ''))) break; // （　）中·一日中처럼 앞말에 붙는 中·日 등은 읽기가 달라져서 안 붙여요
         const k = seg.slice(j, j + n), set = map.get(k);
         if (set && set.size === 1) { out += `{${k}|${[...set][0]}}`; j += n; hit = true; break; }
       }

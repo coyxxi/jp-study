@@ -41,7 +41,7 @@ function makeLookup() {
     const p = ensureP(id);
     if (p.s === 'n' || p.s === 'a') p.s = 'l';
     if (p.s === 'm') { p.s = 'l'; p.c = 0; }
-    p.nx = addDays(App.today, 1);
+    p.nx = addDays(App.today, 1); p.add = App.today; // 다음 세트에 '추가한 단어'로 먼저 나와요
     markDirty('prog:' + chunkOf(id));
     const hx = looked.find(x => x.id === id); if (hx) hx.added = true;
     drawHist();

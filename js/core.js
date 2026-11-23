@@ -302,7 +302,7 @@ function setStatus(id, s) {
    - 서로 다른 시험(2시간 이상 떨어진 시험)에서 3번 연속 맞히면 익힘 (아침·점심·저녁 세 번이면 그날 익힘)
    - 익힘 뒤에는 3일 → 7일 → 15일 → 30일 뒤에 확인 문제가 나오고, 틀리면 다시 "학습 중"
    - 같은 시험 안에서 다시 맞힌 건 세지 않아요 */
-const SESSION_GAP = 2 * 3600e3;
+const SESSION_GAP = 2 * 3600e3; const L_INTERVALS = [1, 2, 4];
 const M_INTERVALS = [3, 7, 15, 30];
 function recordAnswer(ids, ok, area, qref, sub) {
   const t = App.today, now = Date.now();
@@ -321,13 +321,17 @@ function recordAnswer(ids, ok, area, qref, sub) {
       } else if ((p.cs || 0) >= 3) {
         p.s = 'm'; p.ms = 0; p.md = t; p.nx = addDays(t, M_INTERVALS[0]);
       } else {
-        p.s = 'l'; p.nx = addDays(t, 1);
+        // 학습 중: 맞힐수록 간격을 늘려요 (1일 → 2일 → 4일). 같은 시간대에 또 맞힌 건 간격을 줄이지 않아요
+        p.s = 'l';
+        if (newSession) p.nx = addDays(t, L_INTERVALS[Math.min(Math.max((p.cs || 1) - 1, 0), L_INTERVALS.length - 1)]);
+        else if (!p.nx || p.nx <= t) p.nx = addDays(t, 1);
       }
     } else {
       p.w = (p.w || 0) + 1; p.c = 0; p.cs = 0; p.ms = 0; p.ls = now; p.s = 'l'; p.nx = addDays(t, 1); p.lw = t;
     }
     p.h = ((p.h || '') + (ok ? 'o' : 'x')).slice(-6);
     p.qa = now; // 마지막으로 문제에 나온 때 (골고루 내기용)
+    delete p.add; // '복습에 추가'한 단어는 한 번 나오면 일반 복습으로
     markDirty('prog:' + chunkOf(id));
   }
   const mon = t.slice(0, 7);
@@ -348,7 +352,7 @@ function learnVocab() { return allVocab().filter(v => ['a', 'l'].includes(status
 function setStatus(id, to) {
   if (to === 'm') return setMastered(id, true);
   const p = ensureP(id);
-  if (to === 'l') { if (p.s === 'm') { p.cs = 0; p.ms = 0; } p.s = 'l'; p.nx = App.today; }
+  if (to === 'l') { if (p.s === 'm') { p.cs = 0; p.ms = 0; } p.s = 'l'; p.nx = App.today; p.add = App.today; }
   else { p.s = 'n'; p.cs = 0; p.ms = 0; delete p.nx; }
   markDirty('prog:' + chunkOf(canon(id)));
 }
@@ -441,7 +445,7 @@ function aiErrorText(e) {
   if (c === 'invalid_json') return 'AI 응답을 읽지 못했어요. 다시 시도해 주세요. (설정 → AI 연결 테스트에서 원문을 볼 수 있어요)';
   if (c === 'truncated') return 'AI 답이 너무 길어 중간에 잘렸어요. 문항 수를 줄여 다시 시도해 주세요.';
   if (c === 'empty') return 'AI가 쓸 수 있는 문제를 만들지 못했어요. 다시 시도해 주세요.';
-  if (c === 'billing') return 'AI 음성은 Gemini 결제(선불 충전)가 필요해요. AI Studio → 설정 → Billing에서 충전하면 바로 쓸 수 있어요. 그동안은 기본 음성으로 들려줘요.';
+  if (c === 'billing') return 'Gemini 선불 잔액이 0원이에요. AI Studio → 결제에서 크레딧을 충전하면 바로 다시 돼요. (충전 후 반영까지 10분쯤 걸릴 수 있어요)';
   if (c === 'cancelled') return '취소했어요.';
   if (c === 'images_unavailable' || c === 'image_rejected') return '이 사진은 AI에 보낼 수 없어요. 다른 사진으로 해 주세요.';
   return 'AI 요청에 실패했어요 (' + (c || 'error') + ').';
@@ -454,9 +458,41 @@ async function aiJSON(prompt, opts = {}) {
   if (!App.sample) throw { code: 'not_granted' };
   return App.sample.json(prompt, opts);
 }
-function learnedContext(level = 5, max = 60) {
-  const gs = allGrammar().filter(g => ['a', 'l', 'm'].includes(status(g.id)));
-  return gs.slice(-max).map(g => g.p).join(' / ');
+function learnedContext(level = 5, max = 80) {
+  // 최근 공부한 문법을 앞에 두어서, 목록이 길어도 빠지지 않게
+  const recent = recentGrammar(30);
+  const rest = allGrammar().filter(g => ['a', 'l', 'm'].includes(status(g.id)) && !recent.includes(g.id)).map(g => g.id);
+  return [...recent, ...rest].slice(0, max).map(id => App.byId[id]?.p).filter(Boolean).join(' / ');
+}
+/* 최근 공부한 문법: 문제로 풀었거나(문법 문제·비교 묶음·카드) 직접 표시한 문법, 최근 것부터 */
+function recentGrammar(days = 14) {
+  const from = Date.now() - days * 864e5, fromDay = addDays(App.today, -days), sc = {};
+  for (const g of allGrammar()) {
+    const p = P(g.id); if (!p) continue;
+    let t = 0;
+    if (p.qa && p.qa >= from) t = p.qa;
+    if (p.md && p.md >= fromDay) t = Math.max(t, new Date(p.md + 'T12:00:00').getTime());
+    if (p.add && p.add >= fromDay) t = Math.max(t, new Date(p.add + 'T12:00:00').getTime());
+    if (p.sv && p.sv >= fromDay) t = Math.max(t, new Date(p.sv + 'T12:00:00').getTime());
+    if (t) sc[g.id] = t;
+  }
+  for (const [gid, e] of Object.entries(App.gs?.g || {})) {
+    if (!e?.last || e.last < fromDay) continue;
+    const gg = (App.G?.grammar || []).find(x => x.id === gid);
+    for (const id of gg?.ids || []) sc[id] = Math.max(sc[id] || 0, new Date(e.last + 'T12:00:00').getTime());
+  }
+  return Object.entries(sc).filter(([id]) => App.byId[id]).sort((a, b) => b[1] - a[1]).map(([id]) => id);
+}
+/* 독해 다양화: 글 종류·질문 종류를 돌려가며, 최근 지문과 비슷한 주제는 피해요 */
+const READ_GENRES = ['친구에게 보낸 메모', '선생님에게 보낸 이메일', '편지', '일기', '학교·회사 안내문', '가게 광고', '아파트 게시판 공지', 'SNS 글', '여행 안내 팸플릿', '도서관 이용 안내', '아르바이트 모집 공고', '식당 메뉴와 안내', '버스·전철 시간표 안내', '자기소개 글', '날씨와 일정 알림'];
+const READ_TYPES = ['밑줄 친 말(それ·これ)이 가리키는 것', '글쓴이가 그렇게 한 이유', '글의 내용과 맞는 것', '숫자·요일·시간 찾기', '글쓴이가 다음에 할 일', '정보 찾기: 조건에 맞는 것 고르기(안내문·광고·시간표)'];
+function readGuide(level = 5) {
+  const g = shuffle(READ_GENRES.slice()).slice(0, 3), t = shuffle(READ_TYPES.slice()).slice(0, 3);
+  const recent = bankQuestions(q => q.area === 'r' && q.passage).slice(-12).map(q => plainJa(q.passage).replace(/\s/g, '').slice(0, 24)).filter(Boolean);
+  return `독해 문제 규칙: 지문마다 글 종류를 다르게 하세요 (이번에 쓸 글 종류: ${g.join(', ')}). 질문도 매번 다른 종류로 (${t.join(' / ')}).
+'정보 찾기(情報検索)'는 안내문·광고·시간표처럼 표나 항목이 있는 글을 passage에 쓰고, 조건에 맞는 답을 고르게 하세요.
+'中文(중간 글)'을 만들면 같은 passage로 서로 다른 질문 2개를 연속으로 만들어도 좋아요.
+매일 아침 일과·산책 같은 흔한 주제는 피하세요.` + (recent.length ? `\n최근에 낸 지문(이런 주제·내용은 피하세요): ${recent.join(' / ')}` : '');
 }
 
 /* ---------- question bank ---------- */
@@ -627,7 +663,10 @@ function itemsForPrompt(ids) {
 }
 const BG = { tasks: 0, set(text) { const el = document.getElementById('bgTask'); if (!el) return; if (text) { el.textContent = text; el.hidden = false; } else el.hidden = true; } };
 async function generateQuestions({ ids, level = 5, counts, source, title, signal, onProgress }) {
-  const want = counts || { '文脈規定(v)': 4, '言い換え類義(v)': 2, '文法形式の判断(g)': 6, '文の組み立て(g)': 3, '読解 短文(r)': 2, '聴解 課題理解/ポイント理解(l)': 3 };
+  const want = counts || { '文脈規定(v)': 4, '言い換え類義(v)': 2, '文法形式の判断(g)': 6, '文の組み立て(g)': 3, '読解 内容理解 短文(r)': 2, '読解 情報検索(r)': 1, '聴解 課題理解/ポイント理解(l)': 3 };
+  // 최근 공부한 문법은 꼭 출제 대상에 넣어요
+  const recentG = recentGrammar(14);
+  if (Object.keys(want).some(k => /\(g\)/.test(k))) ids = [...new Set([...recentG.slice(0, 4), ...(ids || [])])];
   // 한 번에 많이 만들면 답이 잘리므로 6문항 안팎으로 나눠 동시에 요청
   const entries = Object.entries(want).filter(([, n]) => n > 0);
   const batches = []; let cur = {}, curN = 0;
@@ -645,8 +684,9 @@ async function generateQuestions({ ids, level = 5, counts, source, title, signal
 ${itemsForPrompt(shuffle(ids).slice(0, 14))}
 
 학습자가 이미 배운 문법(이 범위를 넘는 문법은 쓰지 마세요): ${learnedContext(level)}
-어휘·문법 수준: N${level} 범위 안에서만.
+${recentG.length && Object.keys(b).some(k => /\(g\)/.test(k)) ? `최근 공부한 문법(문법 문제에 우선해서 써 주세요): ${recentG.slice(0, 8).map(id => App.byId[id]?.p).filter(Boolean).join(' / ')}\n` : ''}어휘·문법 수준: N${level} 범위 안에서만.
 만들 문제 (총 ${n}개): ${Object.entries(b).map(([k, v]) => `${k} ${v}개`).join(', ')}
+${Object.keys(b).some(k => /\(r\)/.test(k)) ? readGuide(level) : ''}
 각 문제의 items에는 위 목록의 id 중 실제로 묻는 항목을 넣으세요.
 ${qSpec(level)}`;
     try {

@@ -140,16 +140,38 @@ async function runFor(admin: Any, uid: string, state: Any, today: string, hm: st
     for (const i of shuffle(lv.filter((i) => ["a", "l"].includes(st(i.id))))) { if (ids.size >= 15) break; ids.add(i.id); }
     for (const i of shuffle(lv.filter((i) => st(i.id) === "n")).slice(0, 3)) ids.add(i.id);
     const idList = [...ids].filter((id) => byId.has(id));
-    const itemsText = idList.map((id) => { const it = byId.get(id); return it.t === "g" ? `${id}: 문법 ${it.p} (${it.m})` : it.t === "k" ? `${id}: 한자 ${it.c} (${it.m})` : `${id}: 단어 ${it.w}[${it.r}] (${it.m})`; }).join("\n");
-    const learned = grammar.filter((g) => ["a", "l", "m"].includes(st(g.id))).slice(-60).map((g) => g.p).join(" / ");
+    let itemsText = idList.map((id) => { const it = byId.get(id); return it.t === "g" ? `${id}: 문법 ${it.p} (${it.m})` : it.t === "k" ? `${id}: 한자 ${it.c} (${it.m})` : `${id}: 단어 ${it.w}[${it.r}] (${it.m})`; }).join("\n");
+    // 최근 공부한 문법(문제로 풀었거나 카드를 펼쳐 본 것, 묶음 비교로 공부한 것) → 출제 대상에 먼저 넣고, 배운 문법 목록 맨 앞에
+    const fromMs = Date.now() - 14 * 864e5, fromDay = addDays(today, -14);
+    const rec: Record<string, number> = {};
+    const dayMs = (d: string) => new Date(d + "T12:00:00").getTime();
+    for (const g of grammar) { const p = prog[g.id]; if (!p) continue; let t = 0; if (p.qa && p.qa >= fromMs) t = p.qa; for (const k of ["md", "add", "sv"]) if (p[k] && p[k] >= fromDay) t = Math.max(t, dayMs(p[k])); if (t) rec[g.id] = t; }
+    const gsG = rows.find((r) => r.path === "state/groups")?.data?.g ?? {};
+    try {
+      const groups: Any = await (await fetch(new URL("data/groups.json", state.site).href)).json();
+      for (const gg of groups.grammar ?? []) { const e = gsG["g:" + gg.title] ?? gsG[gg.id]; if (e?.last && e.last >= fromDay) for (const id of gg.ids ?? []) rec[id] = Math.max(rec[id] ?? 0, dayMs(e.last)); }
+    } catch { /* 묶음 자료가 없어도 계속 */ }
+    const recentG = Object.entries(rec).filter(([id]) => byId.has(id)).sort((a, b) => b[1] - a[1]).map(([id]) => id);
+    for (const id of recentG.slice(0, 4)) if (!idList.includes(id)) idList.unshift(id);
+    itemsText = idList.map((id) => { const it = byId.get(id); return it.t === "g" ? `${id}: 문법 ${it.p} (${it.m})` : it.t === "k" ? `${id}: 한자 ${it.c} (${it.m})` : `${id}: 단어 ${it.w}[${it.r}] (${it.m})`; }).join("\n");
+    const learnedIds = [...recentG, ...grammar.filter((g) => ["a", "l", "m"].includes(st(g.id)) && !rec[g.id]).map((g) => g.id)].slice(0, 80);
+    const learned = learnedIds.map((id) => byId.get(id)?.p).filter(Boolean).join(" / ");
+    const recentText = recentG.slice(0, 8).map((id) => byId.get(id)?.p).filter(Boolean).join(" / ");
+    // 독해 다양화: 글 종류·질문 종류 돌리기 + 최근 지문 피하기
+    const GENRES = ["친구에게 보낸 메모", "선생님에게 보낸 이메일", "편지", "일기", "학교·회사 안내문", "가게 광고", "아파트 게시판 공지", "SNS 글", "여행 안내 팸플릿", "도서관 이용 안내", "아르바이트 모집 공고", "식당 메뉴와 안내", "버스·전철 시간표 안내", "자기소개 글", "날씨와 일정 알림"];
+    const RTYPES = ["밑줄 친 말(それ·これ)이 가리키는 것", "글쓴이가 그렇게 한 이유", "글의 내용과 맞는 것", "숫자·요일·시간 찾기", "글쓴이가 다음에 할 일", "정보 찾기: 조건에 맞는 것 고르기(안내문·광고·시간표)"];
+    const recentPass = banks.flatMap((b) => (b.qs ?? []).filter((q: Any) => q.area === "r" && q.passage)).slice(-12).map((q: Any) => String(q.passage).replace(/\{([^{}|]+)\|[^{}]+\}/g, "$1").replace(/\s/g, "").slice(0, 24));
+    const readGuide = () => `독해 문제 규칙: 지문마다 글 종류를 다르게 하세요 (이번에 쓸 글 종류: ${shuffle(GENRES.slice()).slice(0, 3).join(", ")}). 질문도 매번 다른 종류로 (${shuffle(RTYPES.slice()).slice(0, 3).join(" / ")}).
+'정보 찾기(情報検索)'는 안내문·광고·시간표처럼 표나 항목이 있는 글을 passage에 쓰고, 조건에 맞는 답을 고르게 하세요.
+'中文(중간 글)'을 만들면 같은 passage로 서로 다른 질문 2개를 연속으로 만들어도 좋아요. 매일 아침 일과·산책 같은 흔한 주제는 피하세요.` + (recentPass.length ? `\n최근에 낸 지문(이런 주제·내용은 피하세요): ${recentPass.join(" / ")}` : "");
     // 약한 영역에 2문항 더
     const acc: Record<string, number[]> = { v: [0, 0], g: [0, 0], r: [0, 0], l: [0, 0] };
     const from = addDays(today, -14);
     for (const r of pick("log/")) for (const [d, arr] of Object.entries(r.data.days ?? {})) { if (d < from) continue; for (const [a, ok] of arr as Any[]) if (acc[a]) { acc[a][0] += ok; acc[a][1]++; } }
     const measured = Object.entries(acc).filter(([, [, n]]) => n >= 5);
     const weak = measured.length ? measured.sort((a, b) => a[1][0] / a[1][1] - b[1][0] / b[1][1])[0][0] : "l";
-    const counts: Record<string, number> = { "文脈規定(v)": 3, "言い換え類義(v)": 2, "文法形式の判断(g)": 4, "文の組み立て(g)": 2, "読解 短文(r)": 2, "聴解 課題理解/ポイント理解(l)": 3 };
-    const extra: Record<string, string> = { v: "文脈規定(v)", g: "文法形式の判断(g)", r: "読解 短文(r)", l: "聴解 課題理解/ポイント理解(l)" };
+    const counts: Record<string, number> = { "文脈規定(v)": 3, "言い換え類義(v)": 2, "文法形式の判断(g)": 4, "文の組み立て(g)": 2, "読解 内容理解 短文(r)": 2, "読解 情報検索(r)": 1, "聴解 課題理解/ポイント理解(l)": 3 };
+    const extra: Record<string, string> = { v: "文脈規定(v)", g: "文法形式の判断(g)", r: "読解 内容理解 短文(r)", l: "聴解 課題理解/ポイント理解(l)" };
     counts[extra[weak]] += 2;
     // 후리가나 읽기 맞추기 (단어장에 읽기가 하나뿐인 단어)
     const rm = new Map<string, Set<string>>();
@@ -167,8 +189,9 @@ async function runFor(admin: Any, uid: string, state: Any, today: string, hm: st
 ${shuffle(itemsText.split("\n")).slice(0, 14).join("\n")}
 
 학습자가 이미 배운 문법(이 범위를 넘는 문법은 쓰지 마세요): ${learned}
-어휘·문법 수준: N${level} 범위 안에서만.
+${recentText && Object.keys(b).some((k) => k.includes("(g)")) ? `최근 공부한 문법(문법 문제에 우선해서 써 주세요): ${recentText}\n` : ""}어휘·문법 수준: N${level} 범위 안에서만.
 만들 문제 (총 ${total}개): ${Object.entries(b).map(([k, v]) => `${k} ${v}개`).join(", ")}
+${Object.keys(b).some((k) => k.includes("(r)")) ? readGuide() : ""}
 각 문제의 items에는 위 목록의 id 중 실제로 묻는 항목을 넣으세요.
 ${qSpec(level)}`;
       try { return validate(parseLoose(await gemini(prompt)), known, fix); } catch (e) { console.error("batch", e); return []; }

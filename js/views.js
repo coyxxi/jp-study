@@ -59,19 +59,56 @@ async function getDay() {
   }
   App.dayDoc = d; return d;
 }
+/* ---------- 오늘의 복습 단어 20개 구성 ----------
+   복습할 때 된 것 8 (오래 밀린 것·많이 틀린 것 먼저) + 내가 추가한 단어 4 (먼저 배정)
+   + 요즘 공부한 한자가 들어간 단어 3 + 처음 보는 단어 5개 이상 → 모자라면 외울 단어에서 골고루 */
+const REVIEW_MIX = { due: 8, add: 4, kanji: 3, fresh: 5, total: 20 };
+function recentKanjiChars(days = 7, extraGid) {
+  const from = addDays(App.today, -days), gids = new Set(extraGid ? [extraGid] : []);
+  for (const [gid, e] of Object.entries(App.gs?.k || {})) if (e?.last && e.last >= from) gids.add(gid);
+  const set = new Set();
+  for (const gid of gids) for (const id of findGroup('k', gid)?.ids || []) { const k = App.byId[id]; if (k?.c) set.add(k.c); }
+  return set;
+}
+function buildReview(kanjiGid) {
+  const t = App.today, yest = addDays(t, -1), lv = targetLevel();
+  const used = new Set(), mix = { due: [], add: [], kanji: [], fresh: [], more: [] };
+  const okId = id => App.byId[id] && !App.alias[id] && !used.has(id);
+  const take = (key, ids, n) => { for (const id of ids) { if (mix[key].length >= n) break; if (!okId(id)) continue; used.add(id); mix[key].push(id); } };
+  const rows = []; for (const chunk of Object.values(App.prog)) for (const [id, p] of Object.entries(chunk)) if (App.byId[id] && !App.alias[id]) rows.push([id, p]);
+  const shownYest = p => p.qa && ymd(new Date(p.qa)) === yest;
+  // ① 내가 추가한 단어 (먼저)
+  take('add', rows.filter(([, p]) => p.add && p.s !== 'm').sort((a, b) => String(a[1].add).localeCompare(String(b[1].add))).map(([id]) => id), REVIEW_MIX.add);
+  // ② 복습할 때 된 것: 오래 밀릴수록·많이 틀릴수록 먼저, 어제 나온 건 뒤로, 같은 점수는 섞어서
+  const dueRows = rows.filter(([id, p]) => p.nx && p.nx <= t && p.s !== 'n' && !used.has(id));
+  const score = ([, p]) => daysBetween(p.nx, t) + (p.w || 0) * 0.7 - (shownYest(p) ? 3 : 0) + Math.random() * 1.5;
+  take('due', dueRows.map(r => [r[0], score(r)]).sort((a, b) => b[1] - a[1]).map(x => x[0]), REVIEW_MIX.due);
+  // ③ 요즘 공부한 한자가 들어간 단어 (아직 익힘 아닌 것, 오래 안 나온 것부터)
+  const chars = recentKanjiChars(7, kanjiGid);
+  if (chars.size) {
+    const kw = allVocab().filter(v => (v.l || 0) >= lv - 1 && status(v.id) !== 'm' && [...v.w].some(ch => chars.has(ch)));
+    take('kanji', kw.map(v => [v.id, (P(v.id)?.qa || 0) + Math.random() * 864e5]).sort((a, b) => a[1] - b[1]).map(x => x[0]), REVIEW_MIX.kanji);
+  }
+  // ④ 처음 보는 단어: 학원에서 배운 단어 중 아직 문제로 안 나온 것 → 없으면 목표 레벨 새 단어
+  const others = mix.due.length + mix.add.length + mix.kanji.length;
+  const freshN = Math.max(REVIEW_MIX.fresh, REVIEW_MIX.total - others);
+  const never = id => !P(id)?.qa;
+  take('fresh', shuffle(allVocab().filter(v => ['a', 'l'].includes(status(v.id)) && never(v.id)).map(v => v.id)), freshN);
+  if (mix.fresh.length < REVIEW_MIX.fresh) take('fresh', shuffle(allVocab().filter(v => v.l === lv && status(v.id) === 'n').map(v => v.id)), REVIEW_MIX.fresh);
+  // ⑤ 모자라면 외울 단어에서 골고루
+  const have = () => mix.due.length + mix.add.length + mix.kanji.length + mix.fresh.length + mix.more.length;
+  if (have() < REVIEW_MIX.total) take('more', balancedPick(learnVocab().filter(id => !used.has(id))), REVIEW_MIX.total - have());
+  const ids = shuffle([...mix.due, ...mix.add, ...mix.kanji, ...mix.fresh, ...mix.more]);
+  return { ids, mix: { due: mix.due.length, add: mix.add.length, kanji: mix.kanji.length, fresh: mix.fresh.length, more: mix.more.length } };
+}
 function buildDay() {
   const due = dueCount();
-  // 복습할 때가 된 것 (최대 12개) + 외울 단어(학원에서 배움·학습 중)에서 골고루 → 합쳐서 20개 안팎
-  let review = dueItems(Math.min(12, due));
-  review = review.concat(balancedPick(learnVocab().filter(id => !review.includes(id)), Math.max(8, 20 - review.length)));
+  const kpick = pickDailyGroup('k');
+  const rv = buildReview(kpick?.gid);
+  let review = rv.ids;
   // 수업에서 배운 문법은 3일 뒤·1주 뒤에 다시 나와요
   const back = App.lessons.filter(L => L.date && [3, 7].includes(daysBetween(L.date, App.today))).flatMap(L => L.grammarIds || []);
   review = [...new Set(back.slice(0, 4).concat(review))];
-  if (review.length < 8) {
-    const extra = balancedPick(allVocab().filter(v => ['a', 'l'].includes(status(v.id)) && !review.includes(v.id)).map(v => v.id), 10 - review.length);
-    review = review.concat(extra);
-  }
-  if (review.length < 6) review = review.concat(shuffle(allVocab().filter(v => v.l === targetLevel() && status(v.id) === 'n')).slice(0, 8 - review.length).map(v => v.id));
   const last = App.lessons[0];
   const unseen = q => !q.seen;
   let lessonQ = last ? bankQuestions((q, b) => b.source === last.id && q.area !== 'l' && unseen(q)) : [];
@@ -80,9 +117,9 @@ function buildDay() {
   return {
     date: App.today, round: 1, due,
     sec: {
-      review: { ids: review, done: false },
+      review: { ids: review, mix: rv.mix, done: false },
       lesson: { refs: lessonQ.slice(0, 6).map(q => ({ bank: q.bank, id: q.id })), lessonIds: last ? (last.grammarIds || []).concat(last.vocabIds || []).slice(0, 12) : [], done: false },
-      kanji: Object.assign({ done: false }, pickDailyGroup('k') || { gid: null }),
+      kanji: Object.assign({ done: false }, kpick || { gid: null }),
       gram: Object.assign({ done: false }, pickDailyGroup('g') || { gid: null }),
       drill: { ids: drill, done: false },
     },
@@ -149,7 +186,7 @@ async function renderToday(v) {
   const sec = day.sec;
   const kgG = sec.kanji?.gid && findGroup('k', sec.kanji.gid), ggG = sec.gram?.gid && findGroup('g', sec.gram.gid);
   const rows = [
-    ['review', `복습 단어 ${sec.review.ids.length}개`, '외울 단어에서 골고루' + ((day.due || 0) ? ` + 복습할 때 된 것 (${day.due}개 중 오래된 것부터)` : ''), 'c-green', '복습', Math.max(4, sec.review.ids.length * 0.6 | 0)],
+    ['review', `복습 단어 ${sec.review.ids.length}개`, reviewDesc(sec.review, day.due), 'c-green', '복습', Math.max(4, sec.review.ids.length * 0.6 | 0)],
     ['lesson', (sec.lesson.refs.length || sec.lesson.lessonIds.length) ? `수업 문항 ${sec.lesson.refs.length || Math.min(6, sec.lesson.lessonIds.length)}개` : '수업 문항', App.lessons[0] ? (App.lessons[0].unit || '') + ' · ' + (App.lessons[0].note?.title || '') : '수업 기록 후 생성돼요', 'c-blue', '학원', 7],
     sec.kanji && kgG ? ['kanji', `한자 묶음 · ${kgG.title}`, (sec.kanji.fresh ? '새 묶음' : '복습 묶음') + ` ${kgG.ids.map(id => App.byId[id]?.c).join('')}` + (sec.kanji.rev?.length ? ` + 복습 ${sec.kanji.rev.length}묶음` : ''), 'c-red', '한자', 8] : null,
     sec.gram && ggG ? ['gram', `문법 비교 · ${ggG.title}`, '비슷한 문법을 나란히 보고 골라 보기', 'c-blue', '문법', 6] : null,
@@ -170,6 +207,16 @@ async function renderToday(v) {
   });
   setCard.append(h('div', { class: 'setfoot' }, h('p', {}, firstOpen ? `순서대로 하면 약 ${rows.reduce((a, r) => a + (sec[r[0]].done ? 0 : r[5]), 0)}분이에요` : '오늘 세트를 모두 마쳤어요!'),
     firstOpen ? h('button', { class: 'btn', onclick: () => startSection(firstOpen) }, doneCount ? '이어서 시작 →' : '세트 시작 →') : h('div', { class: 'row tight gap' }, h('button', { class: 'btn ghost', onclick: () => nav('test') }, '시험 탭'), h('button', { class: 'btn', onclick: e => newRound(e.currentTarget) }, '새 세트 받기 →'))));
+}
+function reviewDesc(r, due) {
+  const m = r.mix;
+  if (!m) return '외울 단어에서 골고루' + (due ? ` + 복습할 때 된 것 (${due}개 중 오래된 것부터)` : '');
+  return [m.due && `복습 ${m.due}`, m.add && `내가 추가 ${m.add}`, m.kanji && `한자 연계 ${m.kanji}`, (m.fresh || 0) + (m.more || 0) && `새 단어 ${(m.fresh || 0) + (m.more || 0)}`].filter(Boolean).join(' · ');
+}
+/* 수업 문제가 모자랄 때: 최근 수업 4개에서 오래 안 나온 단어·문법을 돌려가며 */
+function lessonFallbackIds(n = 6) {
+  const ids = [...new Set(App.lessons.slice(0, 4).flatMap(L => [...(L.grammarIds || []), ...(L.vocabIds || [])]))].filter(id => App.byId[id] && status(id) !== 'm');
+  return ids.map(id => [id, (P(id)?.qa || 0) + Math.random() * 3600e3]).sort((a, b) => a[1] - b[1]).slice(0, n).map(x => x[0]);
 }
 /* 세트를 다 풀면 같은 날에도 새 세트를 하나 더 받아요 (정답률·진도는 푼 만큼 그대로 쌓여요) */
 /* 오늘 세트에서 화면에 보이는 파트 (청해는 따로 풀기로 해서 빼요) */
@@ -205,7 +252,7 @@ async function startSection(key) {
   if (key === 'review') qs = s.ids.map(id => ruleQ(id));
   // 세트를 만든 뒤에 문제 은행이 채워졌으면, 지금 있는 문제로 채워요
   const topUp = (refs, want, filter) => { const have = new Set(refs.map(r => r.id)); const add = shuffle(bankQuestions(q => !q.seen && !have.has(q.id) && filter(q))).slice(0, Math.max(0, want - refs.length)); if (add.length) { refs.push(...add.map(q => ({ bank: q.bank, id: q.id }))); saveDay(); } };
-  if (key === 'lesson') { topUp(s.refs, 6, q => q.area !== 'l'); qs = s.refs.map(resolveRef).filter(Boolean); if (qs.length < 3) qs = qs.concat(s.lessonIds.slice(0, 6).map(id => ruleQ(id))); }
+  if (key === 'lesson') { topUp(s.refs, 6, q => q.area !== 'l'); qs = s.refs.map(resolveRef).filter(Boolean); if (qs.length < 3) qs = qs.concat(lessonFallbackIds(6).map(id => ruleQ(id))); }
   if (key === 'listen') { topUp(s.refs, 2, q => q.area === 'l'); qs = s.refs.map(resolveRef).filter(Boolean); }
   qs = qs.filter(Boolean);
   if (!qs.length) {
@@ -231,7 +278,8 @@ function pickStudyIds(level, n) {
   const a = pool.filter(i => ['a', 'l'].includes(status(i.id)));
   const nn = pool.filter(i => status(i.id) === 'n');
   const g = a.filter(i => i.t === 'g');
-  const out = [...pick(g, Math.ceil(n * 0.4)), ...pick(a.filter(i => i.t === 'v'), Math.ceil(n * 0.35)), ...pick(nn, Math.ceil(n * 0.25))];
+  const recentG = recentGrammar(14).slice(0, Math.ceil(n * 0.25)).map(id => App.byId[id]).filter(Boolean);
+  const out = [...recentG, ...pick(g, Math.ceil(n * 0.4)), ...pick(a.filter(i => i.t === 'v'), Math.ceil(n * 0.35)), ...pick(nn, Math.ceil(n * 0.25))];
   return [...new Set(out.map(i => i.id))].slice(0, n);
 }
 
@@ -959,7 +1007,7 @@ function itemDetail(it, after) {
     h('div', { class: 'big' }, it.m), it.f ? h('div', { class: 'box' }, it.f) : null, it.ej ? h('div', { class: 'ex' }, jp(it.ej), h('small', {}, it.ek)) : null,
     it.n ? h('p', { class: 'muted' }, it.n) : null, ...ex.map(e => h('div', { class: 'ex' }, jp(e.j), h('small', {}, e.k))),
     h('div', { class: 'kv' }, h('span', {}, '정답 / 오답'), h('b', {}, `${p.r || 0} / ${p.w || 0}`)), h('div', { class: 'kv' }, h('span', {}, '연속 정답일'), h('b', {}, String(p.c || 0))),
-    h('div', { class: 'stbox' }, h('div', { class: 'stlab' }, '상태 직접 바꾸기'), h('div', { class: 'strow' }, sel, h('button', { class: 'btn sm', onclick: () => { const q = ensureP(it.id); q.s = sel.value; if (sel.value === 'n') { q.cs = 0; q.ms = 0; } q.nx = App.today; markDirty('prog:' + chunkOf(it.id)); flushSaves(); m.close(); after && after(); } }, '저장'),
+    h('div', { class: 'stbox' }, h('div', { class: 'stlab' }, '상태 직접 바꾸기'), h('div', { class: 'strow' }, sel, h('button', { class: 'btn sm', onclick: () => { const q = ensureP(it.id); q.s = sel.value; if (sel.value === 'n') { q.cs = 0; q.ms = 0; delete q.add; } else q.add = App.today; q.nx = App.today; markDirty('prog:' + chunkOf(it.id)); flushSaves(); m.close(); after && after(); } }, '저장'),
       h('button', { class: 'btn ghost sm', onclick: () => TTS.speak([{ s: 'N', t: it.t === 'v' ? it.w : it.t === 'k' ? it.c : (it.ej || '') }]) }, '🔈 듣기')))));
 }
 function weeklyChart() {

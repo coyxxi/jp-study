@@ -177,6 +177,8 @@ function grammarCard(g, after) {
       h('span', { class: 'gp', lang: 'ja' }, g.p), h('span', { class: 'gm' }, g.m), h('span', { class: 'chip c-gray' }, g.l ? 'N' + g.l : '-'), h('span', { class: 'chip ' + STATUS_CLS[st] }, STATUS[st])),
     body);
   function fill() {
+    // 문법 카드를 펼쳐 공부하면 '학습 중'으로 기록 → 새 문제를 만들 때 이 문법도 써요
+    { const p = ensureP(g.id); p.sv = App.today; if (!p.s || p.s === 'n') p.s = 'l'; markDirty('prog:' + chunkOf(g.id)); }
     const ex = examplesFor(g, 5);
     const nb = bankQuestions(q => (q.items || []).includes(g.id)).length;
     body.append(...[g.f ? h('div', { class: 'box', lang: 'ja' }, g.f) : null,

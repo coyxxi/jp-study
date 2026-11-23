@@ -116,7 +116,7 @@ function kanjiGroupQuestions(g, max = 8) {
         const opts = fill([word.w, ...variants.slice(0, 3)], []);
         while (opts.length < 4) { const r = App.M.kanji[Math.random() * App.M.kanji.length | 0]; const v = word.w.split(k.c).join(r.c); if (!opts.includes(v)) opts.push(v); }
         const choices = shuffle(opts);
-        qs.push({ id: 'kg' + k.id + 'W', area: 'v', sub: '表記 · 묶음', items: [k.id], prompt: `[u]${word.r}[/u]（${word.m}）를 한자로 쓰면?`, choices, ans: choices.indexOf(word.w), expl: `${word.w}（${word.r}）= ${word.m} · ${k.c} ${k.m}`, rule: 1, kg: g.id });
+        qs.push({ id: 'kg' + k.id + 'W', area: 'v', sub: '表記 · 묶음', items: [k.id, word.id].filter(Boolean), prompt: `[u]${word.r}[/u]（${word.m}）를 한자로 쓰면?`, choices, ans: choices.indexOf(word.w), expl: `${word.w}（${word.r}）= ${word.m} · ${k.c} ${k.m}`, rule: 1, kg: g.id });
       }
     }
     // ② 뜻·음: 같은 묶음의 다른 한자 뜻을 오답으로
@@ -128,7 +128,7 @@ function kanjiGroupQuestions(g, max = 8) {
       const rp = others.map(o => groupWords(o.c, 1)[0]?.r).filter(r => r && r !== word.r);
       const ro = fill([word.r, ...new Set(rp)].slice(0, 4), mutateReading(word.r).concat(allVocab().filter(v => Math.abs(v.r.length - word.r.length) <= 1).slice(0, 300).map(v => v.r)));
       const ch = shuffle(ro);
-      qs.push({ id: 'kg' + k.id + 'R', area: 'v', sub: '漢字読み · 묶음', items: [k.id], prompt: `[u]${word.w}[/u]의 읽는 법은?`, choices: ch, ans: ch.indexOf(word.r), expl: `${word.w}（${word.r}）= ${word.m}`, rule: 1, kg: g.id });
+      qs.push({ id: 'kg' + k.id + 'R', area: 'v', sub: '漢字読み · 묶음', items: [k.id, word.id].filter(Boolean), prompt: `[u]${word.w}[/u]의 읽는 법은?`, choices: ch, ans: ch.indexOf(word.r), expl: `${word.w}（${word.r}）= ${word.m}`, rule: 1, kg: g.id });
     }
   }
   return shuffle(qs).slice(0, max);

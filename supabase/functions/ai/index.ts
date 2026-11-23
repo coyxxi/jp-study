@@ -73,6 +73,8 @@ async function runModels(contents: Any[], json: boolean, tierName: string, budge
     if ([429, 500, 502, 503, 504].includes(r.status) || /overload|high demand|unavailable|quota/i.test(msg)) {
       lastErr = msg; lastCode = r.status === 429 && !/high demand/i.test(msg) ? "rate_limited" : "overloaded"; continue;
     }
+    // 선불 잔액이 없거나 결제가 막힌 경우: 다른 모델로 넘겨도 똑같으니 바로 알려줘요
+    if (r.status === 402 || /prepay|credits? (are )?depleted|billing|insufficient (funds|balance)/i.test(msg)) return { status: 402, body: { error: msg, code: "billing" } };
     if (!r.ok) return { status: 502, body: { error: msg, code: "upstream" } };
     const cand = j?.candidates?.[0];
     const text = (cand?.content?.parts ?? []).filter((p: Any) => !p.thought).map((p: Any) => p.text ?? "").join("");

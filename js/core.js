@@ -64,7 +64,8 @@ async function loadMaster() {
     fetch('data/master.json').then(r => r.json()),
     fetch('data/examples.json').then(r => r.json()).catch(() => []),
     fetch('data/groups.json').then(r => r.json()).catch(() => ({ kanji: [], grammar: [] })),
-  ]).then(([m, ex, gr]) => { App.G = gr; return [m, ex]; });
+    fetch('data/related.json').then(r => r.json()).catch(() => ({ ant: [], syn: [] })),
+  ]).then(([m, ex, gr, rel]) => { App.G = gr; App.RELDATA = rel; return [m, ex]; });
   App.M = m; App.EX = ex;
   for (const v of m.vocab) { v.t = 'v'; App.byId[v.id] = v; }
   for (const k of m.kanji) { k.t = 'k'; App.byId[k.id] = k; }
@@ -483,6 +484,97 @@ function recentGrammar(days = 14) {
   }
   return Object.entries(sc).filter(([id]) => App.byId[id]).sort((a, b) => b[1] - a[1]).map(([id]) => id);
 }
+/* ---------- 일괄 '학습 중'으로 (미학습만 바꾸고 익힘·학습 중은 그대로) ---------- */
+function bulkLearn(ids) {
+  let n = 0;
+  for (const id of ids) {
+    const p = ensureP(id);
+    if ((p.s || 'n') !== 'n') continue;
+    p.s = 'l'; n++; // 복습 날짜는 안 잡아요 → 오늘 세트의 '새 단어'로 조금씩 나와요
+    markDirty('prog:' + chunkOf(canon(id)));
+  }
+  if (n) flushSaves();
+  return n;
+}
+/* 처음 한 번: N5·N4 단어를 학습 중으로 (요청하신 일괄 변경) */
+function migrateN45() {
+  if (App.state.bulk45) return 0;
+  const n = bulkLearn(allVocab().filter(v => v.l === 5 || v.l === 4).map(v => v.id));
+  App.state.bulk45 = App.today; saveState(); flushSaves();
+  if (n) toast(`N5·N4 단어 ${n}개를 학습 중으로 바꿨어요.`);
+  return n;
+}
+/* ---------- 약점 노트 (state/focus) ----------
+   내가 약한 문법 목록 + 헷갈리는 짝 → 오늘 세트 '약점 문법', 시험 탭 '약점 집중', AI 새 문제에 반영 */
+App.focus = null;
+async function loadFocus() {
+  if (!App.db) return null;
+  try {
+    const s = await App.db.doc('state/focus').get();
+    if (s?.exists) {
+      App.focus = clone(s.data());
+      // 기본 약점 목록이 새로 늘었으면(버전 업) 내 목록에 더해요 — 내가 해제한 건 다시 넣지 않아요
+      try {
+        const d = await fetch('data/focus.json').then(r => r.json());
+        if ((App.focus.v || 1) < (d.v || 1)) {
+          const off = new Set(App.focus.off || []);
+          App.focus.items = [...new Set([...(App.focus.items || []), ...(d.items || []).filter(id => !off.has(id))])];
+          App.focus.groups = App.focus.groups?.length ? App.focus.groups : d.groups;
+          App.focus.v = d.v; saveFocus();
+        }
+      } catch { }
+      return App.focus;
+    }
+  } catch { }
+  // 처음: 기본 약점 노트(N5~N4 핵심 문법)로 시작
+  try { const d = await fetch('data/focus.json').then(r => r.json()); App.focus = d; writeDoc('state/focus', d).catch(() => {}); } catch { App.focus = null; }
+  return App.focus;
+}
+function saveFocus() { if (!App.focus) return; App.focus.at = App.today; return writeDoc('state/focus', clone(App.focus)).catch(() => {}); }
+const focusIds = () => (App.focus?.items || []).filter(id => App.byId[id]);
+const isWeak = id => (App.focus?.items || []).includes(id);
+function setWeak(id, on) {
+  App.focus = App.focus || { v: 1, title: '내 약점 문법', items: [], star: [], groups: [], weak: [] };
+  const f = App.focus;
+  f.items = on ? [...new Set([...(f.items || []), id])] : (f.items || []).filter(x => x !== id);
+  f.off = on ? (f.off || []).filter(x => x !== id) : [...new Set([...(f.off || []), id])]; // 직접 해제한 건 기본 목록이 늘어도 다시 안 넣어요
+  f.star = (f.star || []).filter(x => x !== id).concat(on ? [id] : []);
+  f.marked = Object.assign({}, f.marked || {}, { [id]: on ? App.today : undefined }); // 언제 약점으로 표시했는지 (다음 날 아침 문제용)
+  if (!on) delete f.marked[id];
+  saveFocus(); App.dayDoc = null;
+}
+function focusGuide() {
+  const ids = focusIds(); if (!ids.length) return '';
+  const star = new Set(App.focus.star || []);
+  const list = [...ids.filter(id => star.has(id)), ...ids.filter(id => !star.has(id))].slice(0, 24).map(id => App.byId[id].p);
+  return `학습자의 약점 문법(문법 문제에 우선 출제하고, 헷갈리는 짝은 서로 오답 보기로 섞어 주세요): ${list.join(' / ')}` + ((App.focus.groups || []).length ? `\n헷갈리는 짝: ${App.focus.groups.map(g => g.join('·')).join(' / ')}` : '');
+}
+/* 기본 약점 문제 60개(data/focus-qs.json)를 문제 은행에 한 번만 넣어요 */
+async function ensureFocusBank() {
+  if (!App.db || App.banks.some(b => b.id === 'focus-n5')) return;
+  try {
+    const d = await fetch('data/focus-qs.json').then(r => r.json());
+    const bank = { id: 'focus-n5', created: App.today, source: 'focus', title: d.title || '약점 노트', level: 5, qs: d.qs || [] };
+    const cur = await App.db.doc('qbank/focus-n5').get().catch(() => null);
+    if (cur?.exists) return; // 다른 기기에서 이미 넣었으면 그대로
+    await writeDoc('qbank/focus-n5', bank);
+    App.banks.push(bank); App.base.banks[bank.id] = clone(bank);
+  } catch { }
+}
+/* 약점 문제 고르기: 약점 노트 문제 + 약점 문법이 들어간 문제 → 안 푼 것, 틀린 것, 오래된 것 순 */
+function focusQuestions(n = 5, exclude = new Set()) {
+  const set = new Set(focusIds());
+  const pool = bankQuestions((q, b) => q.area === 'g' && !exclude.has(q.id) && (b.source === 'focus' || q.focus || (q.items || []).some(id => set.has(id))));
+  const score = q => (q.seen ? 0 : 100) + (q.seen && (q.ok || 0) < q.seen ? 30 : 0) - (q.seen || 0) * 3 + Math.random() * 10;
+  const out = pool.map(q => [q, score(q)]).sort((a, b) => b[1] - a[1]).slice(0, n).map(x => x[0]);
+  return out;
+}
+
+/* 바꿔 말하기 다양화: 매번 다른 유형으로 */
+const PARA_TYPES = ['반대말+부정 (広いです ＝ 狭くないです)', '반대 동작 (出かけませんでした ＝ 家にいました)', '주고받기 (友達に本を貸しました ＝ 友達は私に本を借りました)', '시간 표현 (先月 ＝ 一か月前, おととい ＝ 二日前)', '가족·관계 (父の兄 ＝ おじ)', '상태·이유 (忙しいです ＝ 時間がありません)', '쉬운 말로 풀기 (綺麗な部屋 ＝ 掃除してある部屋)', '비슷한 말 (準備 ＝ 用意)'];
+function paraGuide() {
+  return `言い換え類義 규칙: prompt에 문장 하나를 쓰고 바꿔 말할 부분에 [u]밑줄[/u]을 긋고, 보기 4개는 '뜻이 가장 가까운 문장(전체 문장)'으로 만드세요. 이번에는 이 유형들로 골고루: ${shuffle(PARA_TYPES.slice()).slice(0, 3).join(' / ')}. 단순한 유의어 바꾸기만 반복하지 마세요.`;
+}
 /* 독해 다양화: 글 종류·질문 종류를 돌려가며, 최근 지문과 비슷한 주제는 피해요 */
 const READ_GENRES = ['친구에게 보낸 메모', '선생님에게 보낸 이메일', '편지', '일기', '학교·회사 안내문', '가게 광고', '아파트 게시판 공지', 'SNS 글', '여행 안내 팸플릿', '도서관 이용 안내', '아르바이트 모집 공고', '식당 메뉴와 안내', '버스·전철 시간표 안내', '자기소개 글', '날씨와 일정 알림'];
 const READ_TYPES = ['밑줄 친 말(それ·これ)이 가리키는 것', '글쓴이가 그렇게 한 이유', '글의 내용과 맞는 것', '숫자·요일·시간 찾기', '글쓴이가 다음에 할 일', '정보 찾기: 조건에 맞는 것 고르기(안내문·광고·시간표)'];
@@ -509,7 +601,7 @@ function loadArchive() {
 async function archiveOldBanks() {
   if (!App.db) return;
   const cut = addDays(App.today, -30);
-  const old = App.banks.filter(b => !b._arch && b.created && b.created < cut && (b.qs || []).every(q => q.seen || q.bad)).slice(0, 10);
+  const old = App.banks.filter(b => !b._arch && b.source !== 'focus' && b.created && b.created < cut && (b.qs || []).every(q => q.seen || q.bad)).slice(0, 10);
   for (const b of old) {
     try {
       const { _dirty, _arch, ...data } = b;
@@ -677,7 +769,7 @@ async function generateQuestions({ ids, level = 5, counts, source, title, signal
   const want = counts || { '文脈規定(v)': 4, '言い換え類義(v)': 2, '文法形式の判断(g)': 6, '文の組み立て(g)': 3, '読解 内容理解 短文(r)': 2, '読解 情報検索(r)': 1, '聴解 課題理解/ポイント理解(l)': 3 };
   // 최근 공부한 문법은 꼭 출제 대상에 넣어요
   const recentG = recentGrammar(14);
-  if (Object.keys(want).some(k => /\(g\)/.test(k))) ids = [...new Set([...recentG.slice(0, 4), ...(ids || [])])];
+  if (Object.keys(want).some(k => /\(g\)/.test(k))) ids = [...new Set([...recentG.slice(0, 4), ...shuffle(focusIds()).slice(0, 3), ...(ids || [])])];
   // 한 번에 많이 만들면 답이 잘리므로 6문항 안팎으로 나눠 동시에 요청
   const entries = Object.entries(want).filter(([, n]) => n > 0);
   const batches = []; let cur = {}, curN = 0;
@@ -698,6 +790,8 @@ ${itemsForPrompt(shuffle(ids).slice(0, 14))}
 ${recentG.length && Object.keys(b).some(k => /\(g\)/.test(k)) ? `최근 공부한 문법(문법 문제에 우선해서 써 주세요): ${recentG.slice(0, 8).map(id => App.byId[id]?.p).filter(Boolean).join(' / ')}\n` : ''}어휘·문법 수준: N${level} 범위 안에서만.
 만들 문제 (총 ${n}개): ${Object.entries(b).map(([k, v]) => `${k} ${v}개`).join(', ')}
 ${Object.keys(b).some(k => /\(r\)/.test(k)) ? readGuide(level) : ''}
+${Object.keys(b).some(k => /言い換え/.test(k)) ? paraGuide() : ''}
+${Object.keys(b).some(k => /\(g\)/.test(k)) ? focusGuide() : ''}
 각 문제의 items에는 위 목록의 id 중 실제로 묻는 항목을 넣으세요.
 ${qSpec(level)}`;
     try {
@@ -962,6 +1056,101 @@ function pager(total, per, cur, onGo, label = '개') {
     h('span', { class: 'pg-info' }, `${total}${label} 중 ${from}–${to}`));
 }
 const scrollTop = el => { try { const y = el.getBoundingClientRect().top + window.scrollY - 16; if (y < window.scrollY) window.scrollTo({ top: y, behavior: 'smooth' }); } catch { } };
+
+/* ---------- 유의어·반대말 ----------
+   기본 자료(data/related.json, N5·N4 핵심) + AI가 찾아 저장한 것(custom/related) */
+let _rel = null;
+function relIndex() {
+  if (_rel) return _rel;
+  const m = {}; const add = (a, k, b, extra) => { (m[a] = m[a] || { ant: [], syn: [], pairs: [] })[k].includes(b) || m[a][k].push(b); if (extra) m[a].pairs.push(extra); };
+  for (const p of App.RELDATA?.ant || []) { add(p.a, 'ant', p.b, p); add(p.b, 'ant', p.a, p); }
+  for (const [a, b] of App.RELDATA?.syn || []) { add(a, 'syn', b); add(b, 'syn', a); }
+  return (_rel = m);
+}
+App.relAI = null; // { id: { syn:[{w,r,m}], ant:[{w,r,m}] } }
+async function loadRelAI() {
+  if (App.relAI) return App.relAI;
+  App.relAI = {};
+  try { const s = await App.db?.doc('custom/related').get(); if (s?.exists) App.relAI = clone(s.data().items || {}); } catch { }
+  return App.relAI;
+}
+/* 한 단어의 비슷한 말·반대말 → [{id?, w, r, m}] */
+function relatedOf(id) {
+  const r = relIndex()[canon(id)] || { ant: [], syn: [] }, ai = App.relAI?.[canon(id)] || {};
+  const fromIds = ids => ids.map(x => App.byId[x]).filter(Boolean).map(v => ({ id: v.id, w: v.w.split(/[;；]/)[0], r: v.r, m: v.m }));
+  const merge = (a, b) => { const out = [...a]; for (const x of b || []) if (x?.w && !out.some(y => y.w === x.w)) out.push(x); return out.slice(0, 4); };
+  return { syn: merge(fromIds(r.syn), ai.syn), ant: merge(fromIds(r.ant), ai.ant) };
+}
+async function fetchRelAI(it) {
+  const r = await aiJSON(`일본어 단어 「${it.w}」(${it.r}, 뜻: ${it.m})의 비슷한 말과 반대말을 JLPT N5~N3 수준 단어로 알려 주세요. 자연스럽게 바꿔 쓸 수 있는 것만, 없으면 빈 배열.
+JSON만: {"syn":[{"w":"표기","r":"히라가나","m":"한국어 뜻"}],"ant":[{"w":"표기","r":"히라가나","m":"한국어 뜻"}]} (각 최대 3개)`, { modelTier: 'quick' });
+  const clean = a => (Array.isArray(a) ? a : []).filter(x => x && x.w && x.w !== it.w).slice(0, 3).map(x => { const v = matchVocab(String(x.w), String(x.r || '')); return v ? { id: v.id, w: v.w.split(/[;；]/)[0], r: v.r, m: v.m } : { w: String(x.w).slice(0, 20), r: String(x.r || '').slice(0, 30), m: String(x.m || '').slice(0, 40) }; });
+  const entry = { syn: clean(r?.syn), ant: clean(r?.ant), at: App.today };
+  await loadRelAI(); App.relAI[canon(it.id)] = entry;
+  mergeWrite('custom/related', cur => { const d = cur || { items: {} }; (d.items = d.items || {})[canon(it.id)] = entry; return d; }).catch(() => {});
+  return entry;
+}
+/* 후리가나: 広い(ひろい) → {広|ひろ}い */
+function furiOf(w, r) {
+  w = String(w).split(/[;；]/)[0]; r = String(r || '').split(/[;；]/)[0];
+  if (!/[一-龯々]/.test(w) || !r) return w;
+  let k = 0; while (k < w.length && k < r.length && w[w.length - 1 - k] === r[r.length - 1 - k] && /[ぁ-ん]/.test(w[w.length - 1 - k])) k++;
+  const kan = w.slice(0, w.length - k), rd = r.slice(0, r.length - k), tail = w.slice(w.length - k);
+  return /^[一-龯々]+$/.test(kan) ? `{${kan}|${rd}}${tail}` : w;
+}
+/* 형용사 부정형: 広い→広くない, いい→よくない, 静か→静かじゃない */
+function adjNeg(v, kind) {
+  const w = v.w.split(/[;；]/)[0], r = v.r.split(/[;；]/)[0];
+  if (kind === 'na') return furiOf(w, r) + 'じゃない';
+  if (w === 'いい') return 'よくない';
+  return furiOf(w.slice(0, -1), r.slice(0, -1)) + 'くない';
+}
+const adjKind = (p, id) => p.t === 'i' || p.t === 'na' ? p.t : p.t === 'i-na' ? (id === p.a ? 'i' : 'na') : p.t === 'na-i' ? (id === p.a ? 'na' : 'i') : null;
+const PARA_DOMAINS = [['広い', '狭い', '大きい', '小さい'], ['暑い', '寒い', '熱い', '冷たい', '温かい', '涼しい'], ['早い', '遅い', '速い'], ['易しい', '難しい', '簡単'], ['楽しい', 'つまらない', '面白い'], ['多い', '少ない'], ['高い', '安い', '低い'], ['静か', 'にぎやか', 'うるさい'], ['いい', '悪い', '綺麗', '汚い'], ['忙しい', '暇']];
+/* 바꿔 말하기(言い換え類義) 문제: 반대말 + ない = 같은 뜻 (広いです ＝ 狭くないです) */
+function paraQuestion(id) {
+  id = canon(id);
+  const pairs = (relIndex()[id]?.pairs || []).filter(p => p.f && adjKind(p, id));
+  if (!pairs.length) return synQuestion(id);
+  const p = pairs[Math.random() * pairs.length | 0];
+  const oid = p.a === id ? p.b : p.a, X = App.byId[id], Y = App.byId[oid];
+  if (!X || !Y) return null;
+  const kx = adjKind(p, id), ky = adjKind(p, oid);
+  const pos = (v, k) => furiOf(v.w, v.r) + (k === 'na' ? '' : '');
+  // 헷갈리게 하되 정답이 둘이 되지 않게: 뜻이 가까운 영역(크기·온도·속도 등)의 형용사는 오답으로 안 써요
+  const dom = x => { const w = App.byId[x]?.w.split(/[;；]/)[0] || ''; return PARA_DOMAINS.findIndex(d => d.includes(w)); };
+  const myDom = new Set([dom(id), dom(oid)].filter(d => d >= 0));
+  const others = (App.RELDATA?.ant || []).filter(q => q.f && q !== p && q.a !== id && q.b !== id && !myDom.has(dom(q.a)) && !myDom.has(dom(q.b)));
+  const z = others[Math.random() * others.length | 0]; const zid = z ? (Math.random() < .5 ? z.a : z.b) : null; const Z = App.byId[zid];
+  const right = p.f + adjNeg(Y, ky) + 'です。';
+  const wrong = [p.f + pos(Y, ky) + 'です。', p.f + adjNeg(X, kx) + 'です。', Z ? p.f + adjNeg(Z, adjKind(z, zid)) + 'です。' : null].filter(Boolean);
+  const choices = shuffle([right, ...wrong]).slice(0, 4);
+  while (choices.length < 4) choices.push('—');
+  const wy = Y.w.split(/[;；]/)[0], wx = X.w.split(/[;；]/)[0];
+  return { id: 'pq' + id + oid, area: 'v', sub: '言い換え類義', items: [id, oid], rule: 1,
+    prompt: p.f + '[u]' + pos(X, kx) + 'です[/u]。\n밑줄 친 부분과 뜻이 가장 가까운 것은?', choices, ans: choices.indexOf(right),
+    expl: `${wx}(${X.m}) = ${wy}(${Y.m})의 반대 → 「${wy}」에 ない를 붙이면 「${wx}」와 같은 뜻이에요.` };
+}
+/* 비슷한 말 고르기 (문장 틀이 없는 단어) */
+function synQuestion(id) {
+  const X = App.byId[id]; if (!X || X.t !== 'v') return null;
+  const syn = relatedOf(id).syn.filter(s => s.id && App.byId[s.id]); if (!syn.length) return null;
+  const S = App.byId[syn[Math.random() * syn.length | 0].id];
+  const pool = shuffle(allVocab().filter(v => v.id !== X.id && v.id !== S.id && Math.abs((v.l || 0) - (X.l || 0)) <= 1 && v.m !== S.m)).slice(0, 3);
+  const cs = shuffle([S, ...pool]);
+  return { id: 'sq' + id, area: 'v', sub: '言い換え類義', items: [id], rule: 1, prompt: `[u]${furiOf(X.w, X.r)}[/u]와 뜻이 가장 가까운 말은?`,
+    choices: cs.map(v => furiOf(v.w, v.r)), ans: 0 + cs.indexOf(S), expl: `${X.w.split(/[;；]/)[0]}(${X.m}) ≒ ${S.w.split(/[;；]/)[0]}(${S.m})` };
+}
+/* 문제 묶음 안의 단어 일부를 바꿔 말하기 문제로 (최대 n개) */
+function mixPara(qs, n = 3) {
+  let left = n;
+  return qs.map(q => {
+    if (left <= 0 || !q || q.area !== 'v' || !q.rule || !q.items?.length) return q;
+    const id = q.items[0]; if (!relIndex()[canon(id)] || isMastered(id)) return q;
+    const pq = paraQuestion(id); if (!pq) return q;
+    left--; return pq;
+  });
+}
 
 /* ---------- db load ---------- */
 async function loadAll() {

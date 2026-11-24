@@ -153,14 +153,22 @@ async function runFor(admin: Any, uid: string, state: Any, today: string, hm: st
     } catch { /* 묶음 자료가 없어도 계속 */ }
     const recentG = Object.entries(rec).filter(([id]) => byId.has(id)).sort((a, b) => b[1] - a[1]).map(([id]) => id);
     for (const id of recentG.slice(0, 4)) if (!idList.includes(id)) idList.unshift(id);
-    itemsText = idList.map((id) => { const it = byId.get(id); return it.t === "g" ? `${id}: 문법 ${it.p} (${it.m})` : it.t === "k" ? `${id}: 한자 ${it.c} (${it.m})` : `${id}: 단어 ${it.w}[${it.r}] (${it.m})`; }).join("\n");
+    const _rebuild = () => idList.map((id) => { const it = byId.get(id); return it.t === "g" ? `${id}: 문법 ${it.p} (${it.m})` : it.t === "k" ? `${id}: 한자 ${it.c} (${it.m})` : `${id}: 단어 ${it.w}[${it.r}] (${it.m})`; }).join("\n");
     const learnedIds = [...recentG, ...grammar.filter((g) => ["a", "l", "m"].includes(st(g.id)) && !rec[g.id]).map((g) => g.id)].slice(0, 80);
     const learned = learnedIds.map((id) => byId.get(id)?.p).filter(Boolean).join(" / ");
     const recentText = recentG.slice(0, 8).map((id) => byId.get(id)?.p).filter(Boolean).join(" / ");
+    // 약점 노트(state/focus): 약점 문법을 출제 대상에 넣고, 헷갈리는 짝을 오답 보기로 섞게
+    const focus = rows.find((r) => r.path === "state/focus")?.data ?? null;
+    const focusIds: string[] = (focus?.items ?? []).filter((id: string) => byId.has(id));
+    for (const id of shuffle(focusIds.slice()).slice(0, 3)) if (!idList.includes(id)) idList.push(id);
+    const focusText = focusIds.length ? `학습자의 약점 문법(문법 문제에 우선 출제하고, 헷갈리는 짝은 서로 오답 보기로 섞어 주세요): ${focusIds.slice(0, 24).map((id) => byId.get(id)?.p).join(" / ")}` + ((focus?.groups ?? []).length ? `\n헷갈리는 짝: ${focus.groups.map((g: string[]) => g.join("·")).join(" / ")}` : "") : "";
+    itemsText = _rebuild();
     // 독해 다양화: 글 종류·질문 종류 돌리기 + 최근 지문 피하기
     const GENRES = ["친구에게 보낸 메모", "선생님에게 보낸 이메일", "편지", "일기", "학교·회사 안내문", "가게 광고", "아파트 게시판 공지", "SNS 글", "여행 안내 팸플릿", "도서관 이용 안내", "아르바이트 모집 공고", "식당 메뉴와 안내", "버스·전철 시간표 안내", "자기소개 글", "날씨와 일정 알림"];
     const RTYPES = ["밑줄 친 말(それ·これ)이 가리키는 것", "글쓴이가 그렇게 한 이유", "글의 내용과 맞는 것", "숫자·요일·시간 찾기", "글쓴이가 다음에 할 일", "정보 찾기: 조건에 맞는 것 고르기(안내문·광고·시간표)"];
     const recentPass = banks.flatMap((b) => (b.qs ?? []).filter((q: Any) => q.area === "r" && q.passage)).slice(-12).map((q: Any) => String(q.passage).replace(/\{([^{}|]+)\|[^{}]+\}/g, "$1").replace(/\s/g, "").slice(0, 24));
+    const PARA = ["반대말+부정 (広いです ＝ 狭くないです)", "반대 동작 (出かけませんでした ＝ 家にいました)", "주고받기 (友達に本を貸しました ＝ 友達は私に本を借りました)", "시간 표현 (先月 ＝ 一か月前, おととい ＝ 二日前)", "가족·관계 (父の兄 ＝ おじ)", "상태·이유 (忙しいです ＝ 時間がありません)", "쉬운 말로 풀기 (綺麗な部屋 ＝ 掃除してある部屋)", "비슷한 말 (準備 ＝ 用意)"];
+    const paraGuide = () => `言い換え類義 규칙: prompt에 문장 하나를 쓰고 바꿔 말할 부분에 [u]밑줄[/u]을 긋고, 보기 4개는 '뜻이 가장 가까운 문장(전체 문장)'으로 만드세요. 이번에는 이 유형들로 골고루: ${shuffle(PARA.slice()).slice(0, 3).join(" / ")}. 단순한 유의어 바꾸기만 반복하지 마세요.`;
     const readGuide = () => `독해 문제 규칙: 지문마다 글 종류를 다르게 하세요 (이번에 쓸 글 종류: ${shuffle(GENRES.slice()).slice(0, 3).join(", ")}). 질문도 매번 다른 종류로 (${shuffle(RTYPES.slice()).slice(0, 3).join(" / ")}).
 '정보 찾기(情報検索)'는 안내문·광고·시간표처럼 표나 항목이 있는 글을 passage에 쓰고, 조건에 맞는 답을 고르게 하세요.
 '中文(중간 글)'을 만들면 같은 passage로 서로 다른 질문 2개를 연속으로 만들어도 좋아요. 매일 아침 일과·산책 같은 흔한 주제는 피하세요.` + (recentPass.length ? `\n최근에 낸 지문(이런 주제·내용은 피하세요): ${recentPass.join(" / ")}` : "");
@@ -192,10 +200,28 @@ ${shuffle(itemsText.split("\n")).slice(0, 14).join("\n")}
 ${recentText && Object.keys(b).some((k) => k.includes("(g)")) ? `최근 공부한 문법(문법 문제에 우선해서 써 주세요): ${recentText}\n` : ""}어휘·문법 수준: N${level} 범위 안에서만.
 만들 문제 (총 ${total}개): ${Object.entries(b).map(([k, v]) => `${k} ${v}개`).join(", ")}
 ${Object.keys(b).some((k) => k.includes("(r)")) ? readGuide() : ""}
+${Object.keys(b).some((k) => k.includes("言い換え")) ? paraGuide() : ""}
+${Object.keys(b).some((k) => k.includes("(g)")) ? focusText : ""}
 각 문제의 items에는 위 목록의 id 중 실제로 묻는 항목을 넣으세요.
 ${qSpec(level)}`;
       try { return validate(parseLoose(await gemini(prompt)), known, fix); } catch (e) { console.error("batch", e); return []; }
     }));
+    // 문법 탭에서 ★약점으로 표시한 문법 → 약점 전용 문제 5개 (최근에 표시한 것부터)
+    if (focusIds.length) {
+      const marked: Record<string, string> = focus?.marked ?? {};
+      const order = focusIds.slice().sort((a, b) => String(marked[b] ?? "").localeCompare(String(marked[a] ?? "")) || Math.random() - 0.5).slice(0, 8);
+      const ftext = order.map((id) => { const it = byId.get(id); return `${id}: 문법 ${it.p} (${it.m})`; }).join("\n");
+      const fprompt = `당신은 JLPT N${level} 출제위원입니다. 학습자가 '약점'으로 표시한 문법만으로 문법 문제를 만드세요.
+약점 문법 (id: 내용):
+${ftext}
+
+학습자가 이미 배운 문법(이 범위를 넘는 문법은 쓰지 마세요): ${learned}
+만들 문제 (총 5개): 文法形式の判断(g) 4개, 文の組み立て(g) 1개
+규칙: 오답 보기에는 정답과 헷갈리기 쉬운 문형(예: だけ·しか·ばかり, まで·までに, 間·間に, から·ので·のに, か·かどうか)을 넣고, 정답은 오직 하나가 되게 하세요. 해설(expl)에는 왜 그 문형인지(접속·뒤에 오는 말 등)를 한 줄로 쓰세요.${(focus?.groups ?? []).length ? `\n헷갈리는 짝: ${focus.groups.map((g: string[]) => g.join("·")).join(" / ")}` : ""}
+각 문제의 items에는 위 목록의 id 중 실제로 묻는 항목을 넣으세요.
+${qSpec(level)}`;
+      try { const fq = validate(parseLoose(await gemini(fprompt)), new Set([...known, ...order]), fix); for (const q of fq) (q as Any).focus = 1; results.push(fq); } catch (e) { console.error("focus batch", e); }
+    }
     const qs = results.flat();
     if (!qs.length) throw new Error("AI가 쓸 수 있는 문제를 만들지 못했어요");
     const id = "b" + crypto.randomUUID().slice(0, 12);

@@ -70,8 +70,8 @@ function studyVocab(v) {
             // 익힘은 빼고 (확인할 날이 된 것만 포함) 골고루
             const pool = ids.filter(id => status(id) !== 'm'); // 익힘은 빼요
             if (!pool.length) return toast('익힘이 아닌 단어가 없어요. 다시 볼 단어는 상태를 학습 중으로 바꿔 주세요.');
-            const o = overlay('단어 퀴즈'); runQuiz(o.body, priority(pool).slice(0, 15).map(id => ruleQ(id)), { onExit: o.close, onDone: () => { o.close(); nav('study', 'vocab'); } });
-          } }, '퀴즈 15문항')));
+            const o = overlay('단어 퀴즈'); runQuiz(o.body, mixPara(priority(pool).slice(0, 15).map(id => ruleQ(id)), 2), { onExit: o.close, onDone: () => { o.close(); nav('study', 'vocab'); } });
+          } }, '퀴즈 15문항'), bulkBtn(() => ids, '단어', () => draw(true))));
       if (!rows.length) grid.append(h('div', { class: 'empty sm' }, '조건에 맞는 단어가 없어요.'));
     }
     if (!reset) grid.innerHTML = '';
@@ -85,6 +85,7 @@ function studyVocab(v) {
         h('div', { class: 'wtop' }, h('span', { class: 'ww', lang: 'ja' }, it.w), h('span', { class: 'wl' }, it.l ? 'N' + it.l : ''), sayBtn(it.w)),
         h('div', { class: 'wr', lang: 'ja' }, it.r && it.r !== it.w ? it.r : '\u00a0'),
         h('div', { class: 'wm' }, it.m),
+        (a => a ? h('div', { class: 'relhint' }, h('b', {}, '반대'), ' ', h('span', { lang: 'ja' }, a.w)) : null)(relatedOf(it.id).ant[0]),
         seg));
     }
     pgBox.innerHTML = ''; pgBox.append(...[pager(rows.length, PER, page, p => { page = p; draw(false); scrollTop(vcard); })].filter(Boolean));
@@ -115,7 +116,7 @@ function studyKanji(v) {
     info.append(h('span', { class: 'muted' }, `${rows.length}자`), h('div', { class: 'row tight gap' },
       h('button', { class: 'btn sm', disabled: !rows.length, onclick: () => { const o = overlay('한자 카드'); flashcards(o.body, priority(ids).slice(0, 25), { onExit: o.close, onDone: () => { o.close(); nav('study', 'kanji'); } }); } }, '카드로 외우기'),
       h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => { const vids = priority(rows.flatMap(k => relatedWords(k.c).slice(0, 2).map(w => w.id))).slice(0, 15); const o = overlay('한자 읽기 퀴즈'); runQuiz(o.body, vids.map(id => ruleQ(id, 'read')).concat(pick(ids, 5).map(id => ruleQ(id))), { onExit: o.close, onDone: () => { o.close(); nav('study', 'kanji'); } }); } }, '읽기 퀴즈'),
-      h('button', { class: 'btn ghost sm', onclick: () => groupList('k') }, '🧩 한자 묶음')));
+      h('button', { class: 'btn ghost sm', onclick: () => groupList('k') }, '🧩 한자 묶음'), bulkBtn(() => ids, '한자', compute)));
     const key = [q.value, fLv.value, fSt.value].join('|'); if (key !== lastKey) { kpage = 0; lastKey = key; }
     const PER = window.matchMedia('(max-width:900px)').matches ? 25 : 50; kpage = Math.min(kpage, Math.max(0, Math.ceil(rows.length / PER) - 1));
     for (const k of rows.slice(kpage * PER, kpage * PER + PER)) {
@@ -146,7 +147,7 @@ function kanjiDetail(k, after) {
 function studyGrammar(v) {
   const pf = studyPrefs.grammar = studyPrefs.grammar || { lv: String(targetLevel()), st: '' };
   const q = h('input', { placeholder: '문형, 뜻 검색… (예: たことがある, ~한 적이)', value: pf.q || '' });
-  const fLv = sel([['', '전 레벨'], ['5', 'N5'], ['4', 'N4'], ['3', 'N3'], ['2', 'N2'], ['0', '기타']], pf.lv), fSt = sel(ST_OPTS, pf.st);
+  const fLv = sel([['', '전 레벨'], ['5', 'N5'], ['4', 'N4'], ['3', 'N3'], ['2', 'N2'], ['0', '기타']], pf.lv), fSt = sel([...ST_OPTS, ['weak', '★ 약점만']], pf.st);
   const info = h('div', { class: 'studybar' }); const list = h('div', { class: 'glist' }); const pgBox = h('div');
   const gcard = h('div', { class: 'card' }, h('div', { class: 'search' }, q, fLv, fSt), info, list, pgBox);
   v.append(gcard);
@@ -154,13 +155,13 @@ function studyGrammar(v) {
   function compute() {
     Object.assign(pf, { q: q.value, lv: fLv.value, st: fSt.value }); savePrefs();
     const s = q.value.trim();
-    const rows = allGrammar().filter(g => (s || !fLv.value || String(g.l || 0) === fLv.value) && statusMatch(g.id, fSt.value) && (!s || [g.p, g.m, g.f, g.ej].some(x => x && x.includes(s))));
+    const rows = allGrammar().filter(g => (s || !fLv.value || String(g.l || 0) === fLv.value) && (fSt.value === 'weak' ? isWeak(g.id) : statusMatch(g.id, fSt.value)) && (!s || [g.p, g.m, g.f, g.ej].some(x => x && x.includes(s))));
     info.innerHTML = ''; list.innerHTML = '';
     const ids = rows.map(r => r.id);
     info.append(h('span', { class: 'muted' }, `${rows.length}개`), h('div', { class: 'row tight gap' },
       h('button', { class: 'btn sm', disabled: !rows.length, onclick: () => { const o = overlay('문법 카드'); flashcards(o.body, priority(ids).slice(0, 20), { onExit: o.close, onDone: () => { o.close(); nav('study', 'grammar'); } }); } }, '카드로 외우기'),
       h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => grammarQuiz(ids) }, '문제 풀기'),
-      h('button', { class: 'btn ghost sm', onclick: () => groupList('g') }, '⚖️ 비슷한 문법 비교')));
+      h('button', { class: 'btn ghost sm', onclick: () => groupList('g') }, '⚖️ 비슷한 문법 비교'), bulkBtn(() => ids, '문법', compute)));
     const key = [q.value, fLv.value, fSt.value].join('|'); if (key !== lastKey) { gpage = 0; lastKey = key; }
     const PER = 10; gpage = Math.min(gpage, Math.max(0, Math.ceil(rows.length / PER) - 1));
     for (const g of rows.slice(gpage * PER, gpage * PER + PER)) list.append(grammarCard(g, compute));
@@ -170,12 +171,30 @@ function studyGrammar(v) {
   [q, fLv, fSt].forEach(el => el.addEventListener('input', compute));
   compute();
 }
+/* 문법 카드의 '약점' 버튼: 켜면 오늘 세트 '약점 문법'·약점 집중에 나오고, 다음 날 아침 자동 문제에 약점 문제가 따로 만들어져요 */
+/* 지금 목록(필터·검색 결과 전체)의 미학습을 한 번에 학습 중으로 */
+function bulkBtn(getIds, label, after) {
+  return h('button', { class: 'btn ghost sm', onclick: () => {
+    const ids = getIds(); const nn = ids.filter(id => status(id) === 'n').length;
+    if (!nn) return toast('이 목록에는 미학습이 없어요.');
+    const m = modal(h('div', {}, h('h2', {}, '모두 학습 중으로'), h('p', {}, `지금 목록의 ${label} ${ids.length}개 중 미학습 ${nn}개를 학습 중으로 바꿀까요?`), h('p', { class: 'muted sm' }, '익힘·학습 중인 것은 그대로예요. 바꾼 것은 오늘 세트의 새 단어로 조금씩 나와요.'),
+      h('div', { class: 'row end gap' }, h('button', { class: 'btn ghost', onclick: () => m.close() }, '취소'), h('button', { class: 'btn', onclick: () => { const n = bulkLearn(ids); m.close(); toast(`${n}개를 학습 중으로 바꿨어요.`); after && after(); } }, `${nn}개 바꾸기`))));
+  } }, '모두 학습 중으로');
+}
+function weakToggle(g, after) {
+  const on = isWeak(g.id);
+  return h('span', { class: 'wktoggle' + (on ? ' on' : ''), role: 'button', title: on ? '약점 해제' : '약점으로 표시 → 내일 아침 약점 문제가 만들어져요', onclick: e => {
+    e.stopPropagation(); setWeak(g.id, !on);
+    toast(on ? `${g.p} 약점을 해제했어요.` : `${g.p}를 약점으로 표시했어요. 내일 아침 자동 문제에 약점 문제가 나와요.`);
+    after ? after() : null;
+  } }, on ? '★ 약점' : '☆ 약점');
+}
 function grammarCard(g, after) {
   const st = status(g.id);
   const body = h('div', { class: 'gbody', hidden: true });
   const el = h('div', { class: 'gcard st-' + st },
     h('button', { class: 'ghead', onclick: () => { body.hidden = !body.hidden; if (!body.hidden && !body.childElementCount) fill(); } },
-      h('span', { class: 'gp', lang: 'ja' }, g.p), h('span', { class: 'gm' }, g.m), h('span', { class: 'chip c-gray' }, g.l ? 'N' + g.l : '-'), h('span', { class: 'chip ' + STATUS_CLS[st] }, STATUS[st])),
+      h('span', { class: 'gp', lang: 'ja' }, g.p), h('span', { class: 'gm' }, g.m), h('span', { class: 'chip c-gray' }, g.l ? 'N' + g.l : '-'), h('span', { class: 'chip ' + STATUS_CLS[st] }, STATUS[st]), weakToggle(g, after)),
     body);
   function fill() {
     // 문법 카드를 펼쳐 공부하면 '학습 중'으로 기록 → 새 문제를 만들 때 이 문법도 써요

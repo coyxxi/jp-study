@@ -243,6 +243,18 @@ ruby{ruby-position:over}rt{font-size:.5em;color:var(--muted);font-weight:400;use
 .tleg{display:flex;justify-content:space-between;font-size:12.5px;margin-top:8px;color:var(--muted)}.tleg i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px}.tleg b{color:var(--ink);font-size:14px}
 .tlast{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border-top:1px dashed var(--line);padding-top:12px;margin-top:auto;font-size:13px}.tlast b{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tlast i{font-style:normal;color:var(--muted);font-size:18px}
 @media (max-width:900px){.tgrid{grid-template-columns:1fr;gap:14px}.tset .srow .t p{display:none}.tset .srow{padding:9px 4px}.tside{gap:10px}.thead h1{font-size:20px}.tdday b{font-size:18px}}
+.rel{border-top:1px dashed var(--line);margin-top:10px;padding-top:12px;display:flex;flex-direction:column;gap:10px}
+.rel .rl{display:flex;align-items:flex-start;gap:10px}.rel .rt{flex:none;font-size:12px;font-weight:700;border-radius:999px;padding:3px 10px;margin-top:3px}
+.rel .syn .rt{background:#E7F3EC;color:#3D7A55}.rel .ant .rt{background:#FDEAF0;color:#B0466A}
+.rel .chips2{display:flex;flex-wrap:wrap;gap:6px}.rel .wchip{display:inline-flex;align-items:baseline;gap:6px;border:1px solid var(--line);border-radius:12px;padding:5px 10px;background:var(--card);font-size:13px;color:var(--ink);text-align:left}
+.rel button.wchip:hover{border-color:var(--green)}.rel .wchip b{font-size:16px}.rel .wchip small{color:var(--muted)}.rel .note{font-size:12px;color:var(--muted)}
+.wcard .relhint{font-size:11.5px;color:var(--muted);margin-top:2px}.wcard .relhint b{color:#B0466A;font-weight:600}
+.fhead{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}.fhead b{font-size:16px}
+.fstat{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:4px 0 14px}.fstat>div{background:var(--soft);border-radius:12px;padding:9px 12px}.fstat small{display:block;color:var(--muted);font-size:12px}.fstat b{font-size:18px}
+.fgram{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}.fgram .fg{display:inline-flex;align-items:baseline;gap:6px;border:1px solid var(--line);border-radius:12px;padding:6px 10px;background:var(--card);font-size:14px;color:var(--ink)}
+.fgram .fg small{color:var(--muted);font-size:11.5px}.fgram .fg.star{border-color:#F3B9CA;background:#FFF2F6}.fgram .fg:hover{border-color:var(--red);text-decoration:line-through}
+.fpairs{margin-bottom:14px}.fnote textarea{width:100%;margin-bottom:8px}
+.wktoggle{flex:none;font-size:11.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted);background:var(--card);cursor:pointer;white-space:nowrap}.wktoggle:hover{border-color:var(--red);color:var(--red)}.wktoggle.on{background:#FFF0F4;border-color:#F3B9CA;color:#C2456E;font-weight:700}
 .pager{display:flex;align-items:center;justify-content:center;gap:4px;margin-top:16px;flex-wrap:wrap}
 .pager button{min-width:34px;height:34px;padding:0 8px;border-radius:9px;font-size:13.5px;color:var(--ink);background:transparent;border:1px solid transparent}
 .pager .pg-n:hover{background:var(--soft);border-color:var(--line)}.pager .pg-n.on{background:var(--green);color:#fff;font-weight:700}
@@ -304,7 +316,7 @@ body{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/20
 @media (max-width:900px){
  .mascot .bub2 span,.mascot .bub2 b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mascot .bub2{flex:1}.mascot{flex:1;min-width:0}.thead{gap:8px}
  .ttip{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
- .ghead{flex-wrap:wrap;row-gap:4px}.ghead .gp{flex:0 1 auto}.ghead .gm{flex:1 1 140px}
+ .ghead{flex-wrap:wrap;row-gap:6px;column-gap:6px}.ghead .gp{flex:0 1 auto}.ghead .gm{flex:1 1 100%;order:1}.ghead .chip,.ghead .wktoggle{order:2}
  .tabs{overflow-x:auto;flex-wrap:nowrap;max-width:100%;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}.tabs button{white-space:nowrap;flex:none}
  .card h2{flex-wrap:wrap;row-gap:8px;white-space:nowrap}.card h2>.row,.card h2>button{margin-left:auto}
  .drow{flex-wrap:wrap;row-gap:6px}.drow>div:first-child{flex:1 1 100%;min-width:0}.drside{margin-left:auto}
@@ -381,6 +393,8 @@ body{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/20
   const uid = session.user.id;
   App.db = makeDb(sb, uid); App.sample = makeSample(sb); App.assets = makeAssets(sb, uid);
   try { await firstRunSeed(); await loadAll(); } catch (e) { toast('저장된 기록을 불러오지 못했어요. 새로고침해 주세요.', 'err'); }
+  try { await loadFocus(); await ensureFocusBank(); } catch { } // 약점 노트·약점 문제
+  try { migrateN45(); } catch { }
   // 6시간 넘게 남아 있는 AI 작업 기록은 정리
   App.db.collection('jobs').get().then(snap => snap.docs.forEach(d => { const x = d.data() || {}; if (Date.now() - (x.at || 0) > 6 * 3600e3 && d.id !== App.state.pendingLesson?.jobId) App.db.doc('jobs/' + d.id).delete().catch(() => {}); })).catch(() => {});
   const base = location.origin + location.pathname.replace(/[^/]*$/, '');

@@ -130,42 +130,53 @@ function studyKanji(v) {
   [q, fLv, fG, fSt].forEach(el => el.addEventListener('input', compute));
   compute();
 }
-/* ---------- 한자 구성: 뜻 부품 · 소리 부품 (자료: KanjiVG) ---------- */
+/* ---------- 한자 구성: 뜻 부품 · 소리 부품 (자료: KanjiVG, 한자 훈: libhangul hanja) ---------- */
+// parts.json: { 한자: [[부품, 역할(m=뜻·s=소리·''=모양), 원래 글자], …], _ko: {부품: 훈}, _on: {부품: 음독} }
 let PARTS = null, PARTS_P = null;
+// 月은 '몸(肉)'과 '달'이 모양만 같아서 따로 묶어요
+const fkey = (c, o) => c === '月' || c === '日' ? c + (o || '') : c;
 function loadParts() { return PARTS_P = PARTS_P || fetch('data/parts.json').then(r => r.json()).then(d => {
-  const byR = {}, byP = {};
-  for (const [c, [r, p]] of Object.entries(d)) { if (r) (byR[r] = byR[r] || []).push(c); if (p) (byP[p] = byP[p] || []).push(c); }
-  return PARTS = { d, byR, byP };
-}).catch(() => (PARTS = { d: {}, byR: {}, byP: {} })); }
+  const ko = d._ko || {}, on = d._on || {}; delete d._ko; delete d._on;
+  const byM = {}, byS = {};
+  for (const [c, ps] of Object.entries(d)) for (const [e, role, o] of ps) {
+    const map = role === 's' ? byS : role === 'm' ? byM : null; if (!map) continue;
+    const key = role === 's' ? e : fkey(e, o); (map[key] = map[key] || []).includes(c) || map[key].push(c);
+  }
+  return PARTS = { d, byM, byS, ko, on };
+}).catch(() => (PARTS = { d: {}, byM: {}, byS: {}, ko: {}, on: {} })); }
 // 부수 변형은 뜻을 따로 적어요. 나머지는 그 글자의 훈(뜻)을 써요
-const RAD_KO = { '氵': '물', '亻': '사람', '扌': '손', '艹': '풀', '⻌': '가다·길', '忄': '마음', '⻖': '언덕', '⻏': '마을', '刂': '칼', '礻': '신·제사', '⺨': '짐승', '衤': '옷', '飠': '먹다', '灬': '불', '罒': '그물', '攵': '치다·하다', '冫': '얼음', '疒': '병', '宀': '집·지붕', '广': '집·건물', '彳': '걷다', '尸': '몸·지붕', '囗': '둘러싸다', '厂': '언덕·벼랑', '穴': '구멍', '隹': '새', '⺌': '작다', '⺤': '손톱·손', '覀': '덮다', '⺕': '손', '廴': '길게 걷다', '⺦': '허물', '卩': '무릎 꿇다', '勹': '감싸다', '冖': '덮다', '冂': '멀다·테두리', '匚': '상자', '匸': '감추다', '虍': '호랑이', '歹': '죽음', '殳': '치다·창', '彡': '무늬·털', '月': '몸·고기 / 달', '王': '구슬', '⺮': '대나무', '竹': '대나무', '糸': '실', '言': '말', '貝': '돈·조개', '金': '쇠·금속', '禾': '벼·곡식', '酉': '술', '頁': '머리', '雨': '비·날씨', '門': '문', '車': '수레', '足': '발', '米': '쌀', '衣': '옷', '巾': '천', '羊': '양', '走': '달리다', '戈': '창', '虫': '벌레', '見': '보다', '皿': '그릇', '魚': '물고기', '馬': '말' };
-const RAD_SKIP = new Set(['丿', '一', '丨', '亠', '八', '十', '丶', '亅', '二', '卜', '儿', '几', '匕', '厶', '夂']);
+const RAD_KO = { '氵': '물', '亻': '사람', '扌': '손', '艹': '풀', '⻌': '가다·길', '忄': '마음', '⻖': '언덕', '⻏': '마을', '刂': '칼', '礻': '신·제사', '⺨': '짐승', '衤': '옷', '飠': '먹다', '灬': '불', '罒': '그물', '攵': '치다·하다', '冫': '얼음', '疒': '병', '宀': '집·지붕', '广': '집·건물', '彳': '걷다', '尸': '몸·지붕', '囗': '둘러싸다', '厂': '언덕·벼랑', '穴': '구멍', '隹': '새', '⺌': '작다', '⺤': '손톱·손', '覀': '덮다', '⺕': '손', '廴': '길게 걷다', '⺦': '허물', '卩': '무릎 꿇다', '勹': '감싸다', '冖': '덮다', '冂': '멀다·테두리', '匚': '상자', '匸': '감추다', '虍': '호랑이', '歹': '죽음', '殳': '치다·창', '彡': '무늬·털', '王': '구슬', '⺮': '대나무', '竹': '대나무', '糸': '실', '言': '말', '貝': '돈·조개', '金': '쇠·금속', '禾': '벼·곡식', '酉': '술', '頁': '머리', '雨': '비·날씨', '門': '문', '車': '수레', '足': '발', '米': '쌀', '衣': '옷', '巾': '천', '羊': '양', '走': '달리다', '戈': '창', '虫': '벌레', '見': '보다', '皿': '그릇', '魚': '물고기', '馬': '말' };
 const kanjiOf = c => App.M.kanji.find(x => x.c === c);
 const hunOf = c => { const k = kanjiOf(c); return k ? String(k.m).split(/[,·]/)[0].trim().replace(/\s*\S$/, '') : ''; };
-function radKo(r, orig) { return RAD_KO[r] || hunOf(orig || r) || ''; }
+function partKo(c, o) { if (c === '月') return o === '肉' ? '몸·고기' : '달'; return RAD_KO[c] || hunOf(o || c) || hunOf(c) || (PARTS && (PARTS.ko[o] || PARTS.ko[c])) || ''; }
+function partOn(c, o) { for (const x of [c, o]) { if (!x) continue; const k = kanjiOf(x); if (k && k.on) return String(k.on).split('・').slice(0, 2).join('・'); if (PARTS && PARTS.on[x]) return PARTS.on[x]; } return ''; }
 const famSort = (a, b) => (!!b.g - !!a.g) || (b.l - a.l) || String(a.id).localeCompare(String(b.id));
 function partsBox(k, close, after) {
   const box = h('div', { class: 'kparts' });
   loadParts().then(P => {
-    const e = P.d[k.c]; if (!e) { box.remove(); return; }
-    const [r, p, orig] = e; const showR = r && !RAD_SKIP.has(r);
-    if (!showR && !p) { box.remove(); return; }
-    const pk = p && kanjiOf(p), pOn = pk ? String(pk.on || '').split('・')[0] : '';
+    const ps = (P.d[k.c] || []).map(([e, role, o]) => [e, role === 'm' && !partKo(e, o) ? '' : role, o]); if (ps.length < 2) { box.remove(); return; }
     const go = c => { const x = kanjiOf(c); if (!x) return; close(); kanjiDetail(x, after); };
-    const piece = (ch, role, sub) => h('span', { class: 'kpiece ' + role }, h('b', { lang: 'ja', class: 'jp-serif' }, ch), h('span', {}, h('em', {}, role === 'r' ? '뜻' : '소리'), sub));
+    const ROLE = { m: '뜻', s: '소리', '': '모양' };
+    const piece = ([e, role, o]) => h('span', { class: 'kpiece ' + (role || 'x') }, h('b', { lang: 'ja', class: 'jp-serif' }, e),
+      h('span', {}, h('em', {}, ROLE[role]), role === 's' ? h('span', { lang: 'ja' }, partOn(e, o)) : role === 'm' ? partKo(e, o) : ''));
+    const formula = h('div', { class: 'kformula' }, h('b', { lang: 'ja', class: 'jp-serif kf-main' }, k.c), h('span', { class: 'kf-op' }, '='));
+    ps.forEach((p, i) => { if (i) formula.append(h('span', { class: 'kf-op' }, '+')); formula.append(piece(p)); });
+    box.append(h('h3', { class: 'mini' }, '한자 구성'), formula);
     const fam = (list, role) => {
       const xs = list.filter(c => c !== k.c).map(kanjiOf).filter(Boolean).sort(famSort);
       if (!xs.length) return null;
       const LIM = 10, wrap = h('div', { class: 'kfam' });
-      const draw = n => { wrap.innerHTML = ''; xs.slice(0, n).forEach(x => wrap.append(h('button', { class: 'kmini st-' + status(x.id) + (x.g ? '' : ' out'), onclick: () => go(x.c) }, h('b', { lang: 'ja', class: 'jp-serif' }, x.c), h('small', { lang: role === 'p' ? 'ja' : undefined }, role === 'p' ? String(x.on || x.kun || '').split('・')[0] : hunOf(x.c))))); if (xs.length > n) wrap.append(h('button', { class: 'kmore', onclick: () => draw(xs.length) }, `+${xs.length - n}`)); };
-      draw(LIM); return wrap;
+      const draw = n => { wrap.innerHTML = ''; xs.slice(0, n).forEach(x => wrap.append(h('button', { class: 'kmini st-' + status(x.id) + (x.g ? '' : ' out'), onclick: () => go(x.c) }, h('b', { lang: 'ja', class: 'jp-serif' }, x.c), h('small', { lang: role === 's' ? 'ja' : undefined }, role === 's' ? String(x.on || x.kun || '').split('・')[0] : hunOf(x.c))))); if (xs.length > n) wrap.append(h('button', { class: 'kmore', onclick: () => draw(xs.length) }, `+${xs.length - n}`)); };
+      draw(LIM); return [wrap, xs.length];
     };
-    box.append(h('h3', { class: 'mini' }, '한자 구성'),
-      h('div', { class: 'kformula' }, h('b', { lang: 'ja', class: 'jp-serif kf-main' }, k.c), h('span', { class: 'kf-op' }, '='),
-        showR ? piece(r, 'r', radKo(r, orig)) : null, showR && p ? h('span', { class: 'kf-op' }, '+') : null, p ? piece(p, 'p', pOn ? h('span', { lang: 'ja' }, pOn) : '') : null));
-    const fr = showR && fam(P.byR[r] || [], 'r'), fp = p && fam(P.byP[p] || [], 'p');
-    if (fr) box.append(h('div', { class: 'kfrow r' }, h('div', { class: 'kfhd' }, h('b', { lang: 'ja' }, r), ` ${radKo(r, orig)} 뜻이 들어간 한자`, h('span', { class: 'muted' }, ` ${(P.byR[r] || []).length - 1}자`)), fr));
-    if (fp) box.append(h('div', { class: 'kfrow p' }, h('div', { class: 'kfhd' }, h('b', { lang: 'ja' }, p), ` 소리가 같은 한자`, h('span', { class: 'muted' }, ' · 읽기가 비슷해요')), fp));
+    // 소리 부품 가족 1줄 + 뜻 부품 가족 최대 2줄 (가족이 큰 순서)
+    const rows = [];
+    for (const [e, role, o] of ps) {
+      if (role === 's') { const f = fam(P.byS[e] || [], 's'); if (f) rows.push({ role, n: 999, el: h('div', { class: 'kfrow p' }, h('div', { class: 'kfhd' }, h('b', { lang: 'ja' }, e), ' 소리가 같은 한자', h('span', { class: 'muted' }, ' · 읽기가 비슷해요')), f[0]) }); }
+      else if (role === 'm') { const f = fam(P.byM[fkey(e, o)] || [], 'm'); const ko = partKo(e, o); if (f) rows.push({ role, n: f[1], el: h('div', { class: 'kfrow r' }, h('div', { class: 'kfhd' }, h('b', { lang: 'ja' }, e), ko ? `(${ko}) 부품이 들어간 한자` : ' 부품이 들어간 한자', h('span', { class: 'muted' }, ` ${f[1]}자`)), f[0]) }); }
+    }
+    const ms = rows.filter(r => r.role === 'm').sort((a, b) => b.n - a.n).slice(0, 2), ss = rows.filter(r => r.role === 's');
+    [...ms, ...ss].forEach(r => box.append(r.el));
   });
   return box;
 }

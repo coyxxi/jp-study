@@ -99,17 +99,18 @@ function studyKanji(v) {
   const pf = studyPrefs.kanji = studyPrefs.kanji || { lv: String(targetLevel()), st: '' };
   const q = h('input', { placeholder: '한자, 뜻, 읽기 검색…', value: pf.q || '' });
   const fLv = sel([['', '전 레벨'], ['5', 'N5'], ['4', 'N4'], ['3', 'N3'], ['2', 'N2'], ['1', 'N1 이상 (사전)']], pf.lv), fSt = sel(ST_OPTS, pf.st);
+  const fG = sel([['', '상용 전체'], ['j', '상용한자만'], ['x', '상용 외']], pf.g || '');
   const info = h('div', { class: 'studybar' }); const grid = h('div', { class: 'kgrid' }); const pgBox = h('div');
-  const kcard = h('div', { class: 'card' }, h('div', { class: 'search' }, q, fLv, fSt), info, grid, pgBox);
+  const kcard = h('div', { class: 'card' }, h('div', { class: 'search' }, q, fLv, fG, fSt), info, grid, pgBox);
   v.append(kcard);
   let kpage = 0, lastKey = '';
   function compute() {
-    Object.assign(pf, { q: q.value, lv: fLv.value, st: fSt.value }); savePrefs();
+    Object.assign(pf, { q: q.value, lv: fLv.value, st: fSt.value, g: fG.value }); savePrefs();
     const s = q.value.trim();
     // 검색할 때는 전 레벨에서 찾아요. 「癒す」처럼 단어로 넣어도 그 안의 한자를 찾아요
     const qk = new Set([...s].filter(ch => /[一-龯々]/.test(ch)));
     const norm = x => String(x || '').replace(/[.\-・]/g, '');
-    const rows = App.M.kanji.filter(k => (s || !fLv.value || String(k.l) === fLv.value) && statusMatch(k.id, fSt.value) && (!s || qk.has(k.c) || [k.m, k.on, k.kun].some(x => x && (x.includes(s) || String(x).split('・').some(y => norm(y) === s || norm(y).startsWith(s))))))
+    const rows = App.M.kanji.filter(k => (s || !fLv.value || String(k.l) === fLv.value) && (s || !fG.value || (fG.value === 'j') === !!k.g) && statusMatch(k.id, fSt.value) && (!s || qk.has(k.c) || [k.m, k.on, k.kun].some(x => x && (x.includes(s) || String(x).split('・').some(y => norm(y) === s || norm(y).startsWith(s))))))
       .sort((a, b) => (s ? (qk.has(b.c) - qk.has(a.c)) || (b.l - a.l) : 0));
     info.innerHTML = ''; grid.innerHTML = '';
     const ids = rows.map(r => r.id);
@@ -117,17 +118,56 @@ function studyKanji(v) {
       h('button', { class: 'btn sm', disabled: !rows.length, onclick: () => { const o = overlay('한자 카드'); flashcards(o.body, priority(ids).slice(0, 25), { onExit: o.close, onDone: () => { o.close(); nav('study', 'kanji'); } }); } }, '카드로 외우기'),
       h('button', { class: 'btn ghost sm', disabled: !rows.length, onclick: () => { const vids = priority(rows.flatMap(k => relatedWords(k.c).slice(0, 2).map(w => w.id))).slice(0, 15); const o = overlay('한자 읽기 퀴즈'); runQuiz(o.body, vids.map(id => ruleQ(id, 'read')).concat(pick(ids, 5).map(id => ruleQ(id))), { onExit: o.close, onDone: () => { o.close(); nav('study', 'kanji'); } }); } }, '읽기 퀴즈'),
       h('button', { class: 'btn ghost sm', onclick: () => groupList('k') }, '🧩 한자 묶음'), bulkBtn(() => ids, '한자', compute)));
-    const key = [q.value, fLv.value, fSt.value].join('|'); if (key !== lastKey) { kpage = 0; lastKey = key; }
+    const key = [q.value, fLv.value, fG.value, fSt.value].join('|'); if (key !== lastKey) { kpage = 0; lastKey = key; }
     const PER = window.matchMedia('(max-width:900px)').matches ? 25 : 50; kpage = Math.min(kpage, Math.max(0, Math.ceil(rows.length / PER) - 1));
     for (const k of rows.slice(kpage * PER, kpage * PER + PER)) {
       const st = status(k.id);
-      grid.append(h('button', { class: 'ktile st-' + st, onclick: () => kanjiDetail(k, compute) }, h('span', { class: 'kc jp-serif', lang: 'ja' }, k.c), h('span', { class: 'km' }, k.m)));
+      grid.append(h('button', { class: 'ktile st-' + st + (k.g ? '' : ' out'), onclick: () => kanjiDetail(k, compute) }, k.g ? null : h('span', { class: 'kout' }, '상용 외'), h('span', { class: 'kc jp-serif', lang: 'ja' }, k.c), h('span', { class: 'km' }, k.m)));
     }
     pgBox.innerHTML = ''; pgBox.append(...[pager(rows.length, PER, kpage, p => { kpage = p; compute(); scrollTop(kcard); }, '자')].filter(Boolean));
     if (!rows.length) grid.append(h('div', { class: 'empty sm' }, '조건에 맞는 한자가 없어요.'));
   }
-  [q, fLv, fSt].forEach(el => el.addEventListener('input', compute));
+  [q, fLv, fG, fSt].forEach(el => el.addEventListener('input', compute));
   compute();
+}
+/* ---------- 한자 구성: 뜻 부품 · 소리 부품 (자료: KanjiVG) ---------- */
+let PARTS = null, PARTS_P = null;
+function loadParts() { return PARTS_P = PARTS_P || fetch('data/parts.json').then(r => r.json()).then(d => {
+  const byR = {}, byP = {};
+  for (const [c, [r, p]] of Object.entries(d)) { if (r) (byR[r] = byR[r] || []).push(c); if (p) (byP[p] = byP[p] || []).push(c); }
+  return PARTS = { d, byR, byP };
+}).catch(() => (PARTS = { d: {}, byR: {}, byP: {} })); }
+// 부수 변형은 뜻을 따로 적어요. 나머지는 그 글자의 훈(뜻)을 써요
+const RAD_KO = { '氵': '물', '亻': '사람', '扌': '손', '艹': '풀', '⻌': '가다·길', '忄': '마음', '⻖': '언덕', '⻏': '마을', '刂': '칼', '礻': '신·제사', '⺨': '짐승', '衤': '옷', '飠': '먹다', '灬': '불', '罒': '그물', '攵': '치다·하다', '冫': '얼음', '疒': '병', '宀': '집·지붕', '广': '집·건물', '彳': '걷다', '尸': '몸·지붕', '囗': '둘러싸다', '厂': '언덕·벼랑', '穴': '구멍', '隹': '새', '⺌': '작다', '⺤': '손톱·손', '覀': '덮다', '⺕': '손', '廴': '길게 걷다', '⺦': '허물', '卩': '무릎 꿇다', '勹': '감싸다', '冖': '덮다', '冂': '멀다·테두리', '匚': '상자', '匸': '감추다', '虍': '호랑이', '歹': '죽음', '殳': '치다·창', '彡': '무늬·털', '月': '몸·고기 / 달', '王': '구슬', '⺮': '대나무', '竹': '대나무', '糸': '실', '言': '말', '貝': '돈·조개', '金': '쇠·금속', '禾': '벼·곡식', '酉': '술', '頁': '머리', '雨': '비·날씨', '門': '문', '車': '수레', '足': '발', '米': '쌀', '衣': '옷', '巾': '천', '羊': '양', '走': '달리다', '戈': '창', '虫': '벌레', '見': '보다', '皿': '그릇', '魚': '물고기', '馬': '말' };
+const RAD_SKIP = new Set(['丿', '一', '丨', '亠', '八', '十', '丶', '亅', '二', '卜', '儿', '几', '匕', '厶', '夂']);
+const kanjiOf = c => App.M.kanji.find(x => x.c === c);
+const hunOf = c => { const k = kanjiOf(c); return k ? String(k.m).split(/[,·]/)[0].trim().replace(/\s*\S$/, '') : ''; };
+function radKo(r, orig) { return RAD_KO[r] || hunOf(orig || r) || ''; }
+const famSort = (a, b) => (!!b.g - !!a.g) || (b.l - a.l) || String(a.id).localeCompare(String(b.id));
+function partsBox(k, close, after) {
+  const box = h('div', { class: 'kparts' });
+  loadParts().then(P => {
+    const e = P.d[k.c]; if (!e) { box.remove(); return; }
+    const [r, p, orig] = e; const showR = r && !RAD_SKIP.has(r);
+    if (!showR && !p) { box.remove(); return; }
+    const pk = p && kanjiOf(p), pOn = pk ? String(pk.on || '').split('・')[0] : '';
+    const go = c => { const x = kanjiOf(c); if (!x) return; close(); kanjiDetail(x, after); };
+    const piece = (ch, role, sub) => h('span', { class: 'kpiece ' + role }, h('b', { lang: 'ja', class: 'jp-serif' }, ch), h('span', {}, h('em', {}, role === 'r' ? '뜻' : '소리'), sub));
+    const fam = (list, role) => {
+      const xs = list.filter(c => c !== k.c).map(kanjiOf).filter(Boolean).sort(famSort);
+      if (!xs.length) return null;
+      const LIM = 10, wrap = h('div', { class: 'kfam' });
+      const draw = n => { wrap.innerHTML = ''; xs.slice(0, n).forEach(x => wrap.append(h('button', { class: 'kmini st-' + status(x.id) + (x.g ? '' : ' out'), onclick: () => go(x.c) }, h('b', { lang: 'ja', class: 'jp-serif' }, x.c), h('small', { lang: role === 'p' ? 'ja' : undefined }, role === 'p' ? String(x.on || x.kun || '').split('・')[0] : hunOf(x.c))))); if (xs.length > n) wrap.append(h('button', { class: 'kmore', onclick: () => draw(xs.length) }, `+${xs.length - n}`)); };
+      draw(LIM); return wrap;
+    };
+    box.append(h('h3', { class: 'mini' }, '한자 구성'),
+      h('div', { class: 'kformula' }, h('b', { lang: 'ja', class: 'jp-serif kf-main' }, k.c), h('span', { class: 'kf-op' }, '='),
+        showR ? piece(r, 'r', radKo(r, orig)) : null, showR && p ? h('span', { class: 'kf-op' }, '+') : null, p ? piece(p, 'p', pOn ? h('span', { lang: 'ja' }, pOn) : '') : null));
+    const fr = showR && fam(P.byR[r] || [], 'r'), fp = p && fam(P.byP[p] || [], 'p');
+    if (fr) box.append(h('div', { class: 'kfrow r' }, h('div', { class: 'kfhd' }, h('b', { lang: 'ja' }, r), ` ${radKo(r, orig)} 뜻이 들어간 한자`, h('span', { class: 'muted' }, ` ${(P.byR[r] || []).length - 1}자`)), fr));
+    if (fp) box.append(h('div', { class: 'kfrow p' }, h('div', { class: 'kfhd' }, h('b', { lang: 'ja' }, p), ` 소리가 같은 한자`, h('span', { class: 'muted' }, ' · 읽기가 비슷해요')), fp));
+  });
+  return box;
 }
 function relatedWords(c) { return allVocab().filter(w => w.w.includes(c)).sort((a, b) => (b.l || 0) - (a.l || 0) || a.w.length - b.w.length); }
 function kanjiDetail(k, after) {
@@ -135,7 +175,8 @@ function kanjiDetail(k, after) {
   const p = P(k.id) || {};
   const s = sel(Object.entries(STATUS), status(k.id));
   const m = modal(h('div', { class: 'kdetail' },
-    h('div', { class: 'khead' }, h('div', { class: 'kbig jp-serif', lang: 'ja' }, k.c), h('div', {}, h('div', { class: 'big' }, k.m), h('div', { class: 'kv' }, h('span', {}, '음독'), h('b', { lang: 'ja' }, k.on || '-')), h('div', { class: 'kv' }, h('span', {}, '훈독'), h('b', { lang: 'ja' }, k.kun || '-')), h('span', { class: 'chip c-gray' }, k.l === 1 ? 'N1 이상 (사전)' : 'N' + k.l))),
+    h('div', { class: 'khead' }, h('div', { class: 'kbig jp-serif', lang: 'ja' }, k.c), h('div', {}, h('div', { class: 'big' }, k.m), h('div', { class: 'kv' }, h('span', {}, '음독'), h('b', { lang: 'ja' }, k.on || '-')), h('div', { class: 'kv' }, h('span', {}, '훈독'), h('b', { lang: 'ja' }, k.kun || '-')), h('div', { class: 'row tight gap' }, h('span', { class: 'chip c-gray' }, k.l === 1 ? 'N1 이상 (사전)' : 'N' + k.l), h('span', { class: 'chip ' + (k.g ? 'c-green' : 'c-gray') }, k.g ? '상용한자' : '상용 외')))),
+    partsBox(k, () => m.close(), after),
     h('h3', { class: 'mini' }, '획순'), strokeBox(k, { size: 180 }), h('p', { class: 'muted sm stk-credit' }, '획순 자료: KanjiVG (CC BY-SA 3.0)'),
     h('h3', { class: 'mini' }, `이 한자가 들어간 단어 ${words.length}개`),
     words.length ? h('div', { class: 'rwords' }, words.map(w => h('div', { class: 'rw' }, h('span', { lang: 'ja', class: 'jpl' }, w.w), h('span', { lang: 'ja', class: 'muted' }, w.r), h('span', {}, w.m), h('span', { class: 'chip ' + STATUS_CLS[status(w.id)] }, STATUS[status(w.id)]), sayBtn(w.w)))) : h('div', { class: 'muted' }, '단어장에 아직 이 한자가 들어간 단어가 없어요.'),
